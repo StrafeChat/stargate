@@ -1,0 +1,22 @@
+{
+  "name": "stargate",
+  "version": "1.0.0",
+  "description": "WebSocket Server for Strafe",
+  "main": "src/index.ts",
+  "scripts": {
+    "dev": "nodemon src/index.ts"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "cassandra-driver": "^4.7.2",
+    "dotenv": "^16.3.1",
+    "redis": "^4.6.12",
+    "ws": "^8.16.0"
+  },
+  "devDependencies": {
+    "@types/ws": "^8.5.10",
+    "nodemon": "^3.0.2"
+  }
+}
