@@ -12,6 +12,7 @@ wss.on("listening", async () => {
 });
 
 wss.on("connection", (client: WebSocket) => {
+    console.log(client);
     client.on("message", async (message) => {
         try {
             var { op, data } = JSON.parse(message.toString("utf-8"));

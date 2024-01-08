@@ -16,9 +16,7 @@ if (!SCYLLA_KEYSPACE) throw new Error('Missing keyspace for Cassandra or Scylla 
 export { SCYLLA_CONTACT_POINTS, SCYLLA_DATA_CENTER, SCYLLA_USERNAME, SCYLLA_PASSWORD, SCYLLA_KEYSPACE };
 
 export enum OpCodes {
-    IDENTIFY = 1,
-    // HEARTBEAT = 1,
-    // HELLO = 0,
+    IDENTIFY = 0,
 }
 
 export enum ErrorCodes {
