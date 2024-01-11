@@ -17,6 +17,7 @@ export { SCYLLA_CONTACT_POINTS, SCYLLA_DATA_CENTER, SCYLLA_USERNAME, SCYLLA_PASS
 
 export enum OpCodes {
     IDENTIFY = 0,
+    HEARTBEAT = 2,
 }
 
 export enum ErrorCodes {
@@ -25,10 +26,15 @@ export enum ErrorCodes {
     DECODE_ERROR = 4002,
     NOT_AUTHENTICATED = 4003,
     INVALID_TOKEN = 4004,
-    ALREADY_AUTHENTICATED = 4005
+    ALREADY_AUTHENTICATED = 4005,
+    SESSION_TIMED_OUT = 4006,
 }
 
 export enum ErrorMessages {
     INVALID_TOKEN = "The token in your identify payload was incorrect.",
     DECODE_ERROR = "You sent an invalid payload, you should not do that!",
+    SESSION_TIMED_OUT = "Your session has timed out, reconnect to start a new one.",
+    NOT_AUTHENTICATED = "You need to authenticate before you can do this!",
 }
+
+export const HEARTBEAT = process.env.HEARTBEAT ? parseInt(process.env.HEARTBEAT) : 5000;
