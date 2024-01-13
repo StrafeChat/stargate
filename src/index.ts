@@ -2,6 +2,7 @@ import http from "http";
 import { WebSocketServer } from "ws";
 import { ErrorCodes, ErrorMessages, HEARTBEAT, OpCodes } from "./config";
 import database from "./database";
+import { PORT } from "./config";
 import { verifyToken } from "./helpers/validation";
 import { WebSocket } from "./types";
 
@@ -61,7 +62,7 @@ server.on("upgrade", (req, socket, head) => {
     })
 });
 
-server.listen(8080, async () => {
+server.listen(PORT, async () => {
     await database.init();
-    console.log("Listening on port 8080");
+    console.log("Listening on port "+ PORT);
 });
