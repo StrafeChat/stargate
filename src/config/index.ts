@@ -13,11 +13,13 @@ if (!SCYLLA_CONTACT_POINTS) throw new Error('Missing an array of contact points 
 if (!SCYLLA_DATA_CENTER) throw new Error('Missing data center for Cassandra or Scylla in the environmental variables.');
 if (!SCYLLA_KEYSPACE) throw new Error('Missing keyspace for Cassandra or Scylla in the environmental variables.');
 
-export { SCYLLA_CONTACT_POINTS, SCYLLA_DATA_CENTER, SCYLLA_USERNAME, SCYLLA_PASSWORD, SCYLLA_KEYSPACE };
+export { SCYLLA_CONTACT_POINTS, SCYLLA_DATA_CENTER, SCYLLA_KEYSPACE, SCYLLA_PASSWORD, SCYLLA_USERNAME };
 
 export enum OpCodes {
-    IDENTIFY = 0,
-    HEARTBEAT = 2,
+    DISPATCH = 0,
+    IDENTIFY = 2,
+    HEARTBEAT = 3,
+    HELLO = 10,
 }
 
 export enum ErrorCodes {
@@ -28,6 +30,7 @@ export enum ErrorCodes {
     INVALID_TOKEN = 4004,
     ALREADY_AUTHENTICATED = 4005,
     SESSION_TIMED_OUT = 4006,
+    RATE_LIMIT = 4007,
 }
 
 export enum ErrorMessages {
@@ -35,6 +38,8 @@ export enum ErrorMessages {
     DECODE_ERROR = "You sent an invalid payload, you should not do that!",
     SESSION_TIMED_OUT = "Your session has timed out, reconnect to start a new one.",
     NOT_AUTHENTICATED = "You need to authenticate before you can do this!",
+    ALREADY_AUTHENTICATED = "You are already authenticated, you don't need to login anymore!",
+    RATE_LIMIT = "You have been rate limited, you will need to wait before you can send more requests.",
 }
 
 export const HEARTBEAT = process.env.HEARTBEAT ? parseInt(process.env.HEARTBEAT) : 5000;
