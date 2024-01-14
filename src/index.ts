@@ -14,7 +14,7 @@ wss.on("error", (err) => {
 })
 
 wss.on("connection", (client: WebSocket) => {
-    
+
     client.send(JSON.stringify({
         op: OpCodes.HELLO,
         data: {
@@ -51,8 +51,13 @@ wss.on("connection", (client: WebSocket) => {
             }
         } catch (err) {
             console.error(err);
-            client.close(ErrorCodes.UNKNOWN, "Something went wrong, maybe try reconnecting?");
+            client.close(ErrorCodes.UNKNOWN, ErrorMessages.UNKNOWN);
         }
+
+        client.on("close", () => {
+            clearTimeout(client.heartbeat);
+            client.terminate();
+        })
     })
 });
 
@@ -64,5 +69,5 @@ server.on("upgrade", (req, socket, head) => {
 
 server.listen(PORT, async () => {
     await database.init();
-    console.log("Listening on port "+ PORT);
+    console.log("Listening on port " + PORT);
 });

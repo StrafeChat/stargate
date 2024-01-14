@@ -31,9 +31,11 @@ export enum ErrorCodes {
     ALREADY_AUTHENTICATED = 4005,
     SESSION_TIMED_OUT = 4006,
     RATE_LIMIT = 4007,
+    NOT_VERIFIED = 4008,
 }
 
 export enum ErrorMessages {
+    UNKNOWN = "An unknown error has occured. You should try to reconnect.",
     INVALID_TOKEN = "The token in your identify payload was incorrect.",
     DECODE_ERROR = "You sent an invalid payload, you should not do that!",
     SESSION_TIMED_OUT = "Your session has timed out, reconnect to start a new one.",
