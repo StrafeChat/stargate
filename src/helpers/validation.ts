@@ -3,7 +3,7 @@ import { cassandra } from "../database";
 import { WebSocket } from "../types";
 
 export const verifyToken = async (client: WebSocket, token: string) => {
-    if (client.id) return client.close(ErrorCodes.ALREADY_AUTHENTICATED, ErrorMessages.ALREADY_AUTHENTICATED);
+    if (client.verified) return client.close(ErrorCodes.ALREADY_AUTHENTICATED, ErrorMessages.ALREADY_AUTHENTICATED);
 
     if (typeof token != "string") return client.close(ErrorCodes.INVALID_TOKEN, ErrorMessages.INVALID_TOKEN);
 
@@ -35,5 +35,11 @@ export const verifyToken = async (client: WebSocket, token: string) => {
         }
     }))
 
-    client.id = id;
+    client.verified = true;
+    client.user = {
+        id,
+        created_at: user.rows[0].get("created_at"),
+        presence: user.rows[0].get("presence"),
+        username: user.rows[0].get("username")
+    }
 }

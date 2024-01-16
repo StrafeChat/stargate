@@ -1,8 +1,8 @@
 import http from "http";
 import { WebSocketServer } from "ws";
-import { ErrorCodes, ErrorMessages, HEARTBEAT, OpCodes } from "./config";
-import database from "./database";
-import { PORT } from "./config";
+import { ErrorCodes, ErrorMessages, HEARTBEAT, OpCodes, PORT } from "./config";
+import database, { cassandra } from "./database";
+import { users } from "./database/collection";
 import { verifyToken } from "./helpers/validation";
 import { WebSocket } from "./types";
 
@@ -10,7 +10,7 @@ const server = http.createServer();
 const wss = new WebSocketServer({ noServer: true });
 
 wss.on("error", (err) => {
-    console.log(err);
+    console.error(err);
 })
 
 wss.on("connection", (client: WebSocket) => {
@@ -40,10 +40,15 @@ wss.on("connection", (client: WebSocket) => {
             switch (op) {
                 case OpCodes.IDENTIFY:
                     await verifyToken(client, data.token);
+                    if (client.verified) await users.updatePresence(client, { ...client.user.presence, online: true })
                     break;
                 case OpCodes.HEARTBEAT:
-                    if (!client.id) client.close(ErrorCodes.NOT_AUTHENTICATED, ErrorMessages.NOT_AUTHENTICATED);
+                    if (!client.verified) client.close(ErrorCodes.NOT_AUTHENTICATED, ErrorMessages.NOT_AUTHENTICATED);
                     else client.heartbeat?.refresh();
+                    break;
+                case OpCodes.PRESENCE:
+                    if (!client.verified) client.close(ErrorCodes.NOT_AUTHENTICATED, ErrorMessages.NOT_AUTHENTICATED);
+                    await users.updatePresence(client, data);
                     break;
                 default:
                     client.close(ErrorCodes.UNKNOWN_OPCODE, "You sent an invalid gateway opcode, so you have been disconnected.");
@@ -53,12 +58,13 @@ wss.on("connection", (client: WebSocket) => {
             console.error(err);
             client.close(ErrorCodes.UNKNOWN, ErrorMessages.UNKNOWN);
         }
-
-        client.on("close", () => {
-            clearTimeout(client.heartbeat);
-            client.terminate();
-        })
     })
+
+    client.on("close", async () => {
+        if (client.verified) await users.updatePresence(client, { ...client.user.presence, online: false });
+        clearTimeout(client.heartbeat);
+        client.terminate();
+    });
 });
 
 server.on("upgrade", (req, socket, head) => {
@@ -69,5 +75,5 @@ server.on("upgrade", (req, socket, head) => {
 
 server.listen(PORT, async () => {
     await database.init();
-    console.log("Listening on port " + PORT);
+    console.info("Listening on port " + PORT);
 });

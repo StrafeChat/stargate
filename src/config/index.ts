@@ -17,8 +17,9 @@ export { SCYLLA_CONTACT_POINTS, SCYLLA_DATA_CENTER, SCYLLA_KEYSPACE, SCYLLA_PASS
 
 export enum OpCodes {
     DISPATCH = 0,
+    HEARTBEAT = 1,
     IDENTIFY = 2,
-    HEARTBEAT = 3,
+    PRESENCE = 3,
     HELLO = 10,
 }
 
