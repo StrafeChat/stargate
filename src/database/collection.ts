@@ -12,8 +12,8 @@ export const users = {
         await cassandra.execute(`
         UPDATE ${cassandra.keyspace}.users
         SET presence=?
-        WHERE id=? AND created_at=?;
-        `, [presenceUpdate, client.user.id, client.user.created_at], { prepare: true }).then(() => {
+        WHERE id=?;
+        `, [presenceUpdate, client.user.id], { prepare: true }).then(() => {
             client.send(JSON.stringify({ op: OpCodes.DISPATCH, event: "PRESENCE_UPDATE", data: { user: client.user, presence: presenceUpdate } }));
             client.user.presence = presenceUpdate;
         }).catch((err) => {
