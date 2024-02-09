@@ -23,6 +23,14 @@ export const verifyToken = async (client: WebSocket, token: string) => {
     LIMIT 1;
     `, [id]);
 
+    // // const spaceMemberObjects = await cassandra.execute(`
+    // // SELECT space_id FROM ${cassandra.keyspace}.space_members
+    // // WHERE user_id=?
+    // // LIMIT 1;
+    // // `, [id]);
+
+    // console.log(spaceMemberObjects)
+
     if (user.rowLength < 1 || user.rowLength > 3) return client.close(ErrorCodes.INVALID_TOKEN, ErrorMessages.INVALID_TOKEN);
     if (user.rows[0].get("last_pass_reset").getTime() != timestamp || user.rows[0].get("secret") != secret) return client.close(ErrorCodes.INVALID_TOKEN, ErrorMessages.INVALID_TOKEN);
 

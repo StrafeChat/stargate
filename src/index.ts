@@ -1,13 +1,14 @@
 import http from "http";
 import { WebSocketServer } from "ws";
 import { ErrorCodes, ErrorMessages, HEARTBEAT, OpCodes, PORT } from "./config";
-import database, { cassandra } from "./database";
+import database, { redis } from "./database";
 import { users } from "./database/collection";
 import { verifyToken } from "./helpers/validation";
 import { WebSocket } from "./types";
 
 const server = http.createServer();
 const wss = new WebSocketServer({ noServer: true });
+const clients = new Map<string, WebSocket[]>();
 
 wss.on("error", (err) => {
     console.error(err);
@@ -41,6 +42,7 @@ wss.on("connection", (client: WebSocket) => {
                 case OpCodes.IDENTIFY:
                     await verifyToken(client, data.token);
                     if (client.verified) await users.updatePresence(client, { ...client.user.presence, online: true })
+                    clients.get(client.user.id)?.push(client);
                     break;
                 case OpCodes.HEARTBEAT:
                     if (!client.verified) client.close(ErrorCodes.NOT_AUTHENTICATED, ErrorMessages.NOT_AUTHENTICATED);
@@ -63,8 +65,18 @@ wss.on("connection", (client: WebSocket) => {
     client.on("close", async () => {
         if (client.verified) await users.updatePresence(client, { ...client.user.presence, online: false });
         clearTimeout(client.heartbeat);
+        const clientsArray = clients.get(client.user?.id);
+
+        if (clientsArray) {
+            const index = clientsArray.indexOf(client);
+            if (index !== -1) clientsArray.splice(index, 1);
+        }
+
+        if (clientsArray?.length === 0) clients.delete(client.user?.id);
+        
         client.terminate();
     });
+
 });
 
 server.on("upgrade", (req, socket, head) => {
@@ -75,5 +87,6 @@ server.on("upgrade", (req, socket, head) => {
 
 server.listen(PORT, async () => {
     await database.init();
+    redis.subscribe("stargate", () => { });
     console.info("Listening on port " + PORT);
 });
