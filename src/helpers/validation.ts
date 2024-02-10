@@ -1,3 +1,4 @@
+import { types } from "cassandra-driver";
 import { ErrorCodes, ErrorMessages, OpCodes } from "../config";
 import { cassandra } from "../database";
 import { WebSocket } from "../types";
@@ -18,10 +19,28 @@ export const verifyToken = async (client: WebSocket, token: string) => {
     const secret = atob(splitToken[2]);
 
     const user = await cassandra.execute(`
-    SELECT last_pass_reset, secret, username, discriminator, global_name, avatar, bot, system, mfa_enabled, banner, accent_color, locale, verified, email, flags, premium_type, public_flags, avatar_decoration, created_at, edited_at, presence FROM ${cassandra.keyspace}.users
-    WHERE id=?
-    LIMIT 1;
+    SELECT last_pass_reset, secret, username, discriminator, global_name, avatar, bot, system, mfa_enabled, banner, accent_color, locale, verified, email, flags, premium_type, public_flags, avatar_decoration, created_at, edited_at, space_ids, presence FROM ${cassandra.keyspace}.users
+      WHERE id=?
+      LIMIT 1;
     `, [id]);
+
+    let spaces: any;
+
+    if (user.rows[0].get("space_ids") == undefined || user.rows[0].get("space_ids").length > 0) {
+    let spacesDb = await cassandra.execute(`
+      SELECT * FROM ${cassandra.keyspace}.spaces
+      WHERE id IN ?
+  `, [user.rows[0].get("space_ids")]);
+
+  await Promise.all(spacesDb.rows.map(async (space: any) => {
+      let rooms = await cassandra.execute(`
+          SELECT * FROM ${cassandra.keyspace}.rooms
+          WHERE id IN ?
+      `, [space.get("room_ids")]);
+      space.rooms = rooms.rows;
+  }));
+  spaces = spacesDb;
+}
 
     if (user.rowLength < 1 || user.rowLength > 3) return client.close(ErrorCodes.INVALID_TOKEN, ErrorMessages.INVALID_TOKEN);
     if (user.rows[0].get("last_pass_reset").getTime() != timestamp || user.rows[0].get("secret") != secret) return client.close(ErrorCodes.INVALID_TOKEN, ErrorMessages.INVALID_TOKEN);
@@ -31,10 +50,12 @@ export const verifyToken = async (client: WebSocket, token: string) => {
             user: {
                 ...user.rows[0], last_pass_reset: undefined, secret: undefined,
                 id
-            }
+            },
+            spaces: spaces.rows ?? null
         }
     }))
-
+    
+    client.spaces = spaces.rows ?? null;
     client.verified = true;
     client.user = {
         id,

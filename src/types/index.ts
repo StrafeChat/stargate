@@ -1,6 +1,7 @@
 import ws from "ws";
 
 export interface WebSocket extends ws.WebSocket {
+    spaces: any | null;
     user: User;
     heartbeat?: NodeJS.Timeout;
     verified?: boolean;
