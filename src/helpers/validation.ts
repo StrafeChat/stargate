@@ -37,8 +37,24 @@ export const verifyToken = async (client: WebSocket, token: string) => {
           SELECT * FROM ${cassandra.keyspace}.rooms
           WHERE id IN ?
       `, [space.get("room_ids")]);
+
+      let members = await cassandra.execute(`
+          SELECT * FROM ${cassandra.keyspace}.space_members
+          WHERE space_id = ?
+      `, [space.get("id")]);
+
+      await Promise.all(members.rows.map(async (member) => {
+        let user = await cassandra.execute(`
+          SELECT * FROM ${cassandra.keyspace}.users
+          WHERE id = ?
+      `, [member.get("user_id")]);
+         member.user = user.rows[0];
+      }))
+
       space.rooms = rooms.rows;
+      space.members = members.rows;
   }));
+
   spaces = spacesDb;
 }
 
