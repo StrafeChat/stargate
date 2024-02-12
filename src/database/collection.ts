@@ -46,7 +46,6 @@ export const users = {
             if (membersWs)
               for (const ws of membersWs) {
                if (alreadySent.includes(ws.user.id)) return;
-               console.log(`send to ${ws.user.username}`)
                 ws.send(
                   JSON.stringify({
                     op: OpCodes.DISPATCH,

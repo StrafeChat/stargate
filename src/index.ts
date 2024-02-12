@@ -1,7 +1,7 @@
 import http from "http";
 import { WebSocketServer } from "ws";
 import { ErrorCodes, ErrorMessages, HEARTBEAT, OpCodes, PORT } from "./config";
-import database, { redis } from "./database";
+import database, { redis, cassandra } from "./database";
 import { users } from "./database/collection";
 import { verifyToken } from "./helpers/validation";
 import { WebSocket } from "./types";
@@ -47,12 +47,12 @@ wss.on("connection", (client: WebSocket) => {
         case OpCodes.IDENTIFY:
           await verifyToken(client, data.token);
           if (client.verified)
-          setTimeout(async () => {
-            await users.updatePresence(client, {
-              ...client.user.presence,
-              online: true,
-            });
-          }, 100)
+            setTimeout(async () => {
+              await users.updatePresence(client, {
+                ...client.user.presence,
+                online: true,
+              });
+            }, 100);
           const clts = clients.get(client.user.id);
 
           if (!clts) clients.set(client.user.id, [client]);
@@ -116,7 +116,28 @@ server.on("upgrade", (req, socket, head) => {
 
 server.listen(PORT, async () => {
   await database.init();
-  redis.subscribe("stargate", () => {});
+  redis.subscribe("stargate", async (res) => {
+    const { event, data } = JSON.parse(res);
+    const space_members = await cassandra.execute(`
+    SELECT user_id FROM ${cassandra.keyspace}.space_members
+    WHERE space_id=?`,
+    [data.space_id]
+  );
+
+  for (const member of space_members.rows) {
+    const membersWs = clients.get(member.get("user_id"))
+    if (membersWs)
+      for (const ws of membersWs) {
+        ws.send(
+          JSON.stringify({
+            op: OpCodes.DISPATCH,
+            event: event.toUpperCase(),
+            data: data,
+          })
+        );
+      }
+  }
+  });
   console.info("Listening on port " + PORT);
 });
 
