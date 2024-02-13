@@ -34,6 +34,16 @@ export const users = {
 
           let alreadySent: any[] = [];
 
+          client.send(
+            JSON.stringify({
+              op: OpCodes.DISPATCH,
+              event: "PRESENCE_UPDATE",
+              data: { user: client.user, presence: presenceUpdate },
+            })
+          );
+
+          alreadySent.push(client.user.id);
+
         for (const id of client.user.space_ids || []) {
           const space_members = await cassandra.execute(`
             SELECT user_id FROM ${cassandra.keyspace}.space_members
