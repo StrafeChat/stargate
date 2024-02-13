@@ -13,7 +13,7 @@
   "dependencies": {
     "cassandra-driver": "^4.7.2",
     "dotenv": "^16.4.2",
-    "redis": "^4.6.12",
+    "redis": "^4.6.13",
     "ws": "^8.16.0"
   },
   "devDependencies": {
