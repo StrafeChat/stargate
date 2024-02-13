@@ -55,7 +55,7 @@ export const users = {
             const membersWs = clients.get(member.get("user_id"))
             if (membersWs)
               for (const ws of membersWs) {
-               if (alreadySent.includes(ws.user.id)) return;
+               if (alreadySent.includes(ws.user.id)) break;
                 ws.send(
                   JSON.stringify({
                     op: OpCodes.DISPATCH,
