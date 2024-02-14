@@ -12,12 +12,12 @@
   "license": "ISC",
   "dependencies": {
     "cassandra-driver": "^4.7.2",
-    "dotenv": "^16.4.1",
-    "redis": "^4.6.12",
+    "dotenv": "^16.4.2",
+    "redis": "^4.6.13",
     "ws": "^8.16.0"
   },
   "devDependencies": {
-    "@types/node": "^20.11.16",
+    "@types/node": "^20.11.17",
     "@types/ws": "^8.5.10",
     "nodemon": "^3.0.3"
   }
