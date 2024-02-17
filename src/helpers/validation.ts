@@ -104,6 +104,7 @@ export const verifyToken = async (client: WebSocket, token: string) => {
         presence: user.rows[0].get("presence"),
         username: user.rows[0].get("username"),
         global_name: user.rows[0].get("global_name"),
-        avatar: user.rows[0].get("avatar")
+        avatar: user.rows[0].get("avatar"),
+        space_ids: user.rows[0].get("space_ids"),     
     }
 }

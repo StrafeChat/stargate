@@ -15,6 +15,7 @@ export interface Presence {
 }
 
 export interface User {
+    space_ids: string[];
     id: string;
     created_at: Date;
     presence: Presence
