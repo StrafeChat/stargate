@@ -1,6 +1,7 @@
 import ws from "ws";
 
 export interface WebSocket extends ws.WebSocket {
+    client: { id: string; created_at: any; presence: any; username: any; };
     spaces: any | null;
     user: User;
     heartbeat?: NodeJS.Timeout;
@@ -20,7 +21,6 @@ export interface User {
     username: string;
     avatar: string;
     global_name: string | null;
-    space_ids: string[];
 }
 export interface Presence {
     status: "online" | "offline" | "idle" | "dnd";

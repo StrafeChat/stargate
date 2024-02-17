@@ -26,64 +26,63 @@ export const verifyToken = async (client: WebSocket, token: string) => {
 
     let spaces: any;
 
-    if (user.rows[0].get("space_ids")?.length > 0) {
-        let spacesDb = await cassandra.execute(`
-            SELECT * FROM ${cassandra.keyspace}.spaces
-            WHERE id IN ?
-        `, [user.rows[0].get("space_ids") || []]);
-    
-        await Promise.all(spacesDb.rows.map(async (space) => {
-            let rooms = await cassandra.execute(`
-                SELECT * FROM ${cassandra.keyspace}.rooms
-                WHERE id IN ?
-            `, [space.get("room_ids") || []]);
-    
-            let members = await cassandra.execute(`
-                SELECT * FROM ${cassandra.keyspace}.space_members
-                WHERE space_id = ?
-            `, [space.get("id")]);
-    
-            await Promise.all(members.rows.map(async (member) => {
-                let user = await cassandra.execute(`
+    if (user.rows[0].get("space_ids") == undefined || user.rows[0].get("space_ids").length > 0) {
+    let spacesDb = await cassandra.execute(`
+      SELECT * FROM ${cassandra.keyspace}.spaces
+      WHERE id IN ?
+  `, [user.rows[0].get("space_ids") || []]);
+
+  await Promise.all(spacesDb.rows.map(async (space: any) => {
+      let rooms = await cassandra.execute(`
+          SELECT * FROM ${cassandra.keyspace}.rooms
+          WHERE id IN ?
+      `, [space.get("room_ids") || []]);
+
+      let members = await cassandra.execute(`
+          SELECT * FROM ${cassandra.keyspace}.space_members
+          WHERE space_id = ?
+      `, [space.get("id")]);
+
+      await Promise.all(members.rows.map(async (member) => {
+        let user = await cassandra.execute(`
+          SELECT * FROM ${cassandra.keyspace}.users
+          WHERE id = ?
+      `, [member.get("user_id")]);
+         member.user = user.rows[0];
+      }));
+      await Promise.all(rooms.rows.map(async (room) => {
+        try {
+            let messages = await cassandra.execute(`
+            SELECT * FROM ${cassandra.keyspace}.messages
+            WHERE room_id = ?
+            ORDER BY created_at DESC
+            LIMIT  25
+        `, [room.get("id")]);
+            
+            await Promise.all(messages.rows.map(async (message) => {
+                let author = await cassandra.execute(`
                     SELECT * FROM ${cassandra.keyspace}.users
                     WHERE id = ?
-                `, [member.get("user_id")]);
-                member.user = user.rows[0];
-            }));
-    
-            await Promise.all(rooms.rows.map(async (room) => {
-                try {
-                    let messages = await cassandra.execute(`
-                    SELECT * FROM ${cassandra.keyspace}.messages
-                    WHERE room_id = ?
-                    ORDER BY created_at DESC
-                    LIMIT  25
-                `, [room.get("id")]);
-                    
-                    await Promise.all(messages.rows.map(async (message) => {
-                        let author = await cassandra.execute(`
-                            SELECT * FROM ${cassandra.keyspace}.users
-                            WHERE id = ?
-                        `, [message.get("author_id")]);
-        
-                        message.author = author.rows[0];
-                        message.created_at = message.created_at.getTime();
+                `, [message.get("author_id")]);
 
-                    }));
-                     room.messages = messages.rows ?? [];
-                     
-                } catch (error) {
-                    room.messages = []; 
-                }
-              }));
-            space.rooms = rooms.rows;
-            space.members = members.rows;
-        }));
-    
-        spaces = spacesDb;
-    }
-    
-    
+                message.author = author.rows[0];
+                message.created_at = message.created_at.getTime();
+
+            }));
+             room.messages = messages.rows ?? [];
+             
+        } catch (error) {
+            room.messages = []; 
+        }
+      }));
+
+      space.rooms = rooms.rows;
+      space.members = members.rows;
+  }));
+
+     spaces = spacesDb;
+   }
+
     if (user.rowLength < 1 || user.rowLength > 3) return client.close(ErrorCodes.INVALID_TOKEN, ErrorMessages.INVALID_TOKEN);
     if (user.rows[0].get("last_pass_reset").getTime() != timestamp || user.rows[0].get("secret") != secret) return client.close(ErrorCodes.INVALID_TOKEN, ErrorMessages.INVALID_TOKEN);
 
@@ -93,20 +92,18 @@ export const verifyToken = async (client: WebSocket, token: string) => {
                 ...user.rows[0], last_pass_reset: undefined, secret: undefined,
                 id
             },
-            spaces: spaces?.rows ?? []
+            spaces: spaces.rows ?? null
         }
     }))
-
-    client.spaces = spaces?.rows ?? [];
+    
+    client.spaces = spaces.rows ?? null;
     client.verified = true;
     client.user = {
         id,
         created_at: user.rows[0].get("created_at"),
         presence: user.rows[0].get("presence"),
         username: user.rows[0].get("username"),
-        space_ids: user.rows[0].get("space_ids"),
-        avatar: user.rows[0].get("avatar"),
-        global_name: user.rows[0].get("global_name")
-        // space_ids: user.rows[0].get("space_ids"),
+        global_name: user.rows[0].get("global_name"),
+        avatar: user.rows[0].get("avatar")
     }
 }
