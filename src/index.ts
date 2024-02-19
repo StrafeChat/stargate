@@ -84,7 +84,7 @@ wss.on("connection", (client: WebSocket) => {
       }
     } catch (err) {
       console.error(err);
-      client.close(ErrorCodes.UNKNOWN, ErrorMessages.UNKNOWN);
+      client.close(ErrorCodes.INVALID_TOKEN, ErrorMessages.UNKNOWN);
     }
   });
 
