@@ -54,7 +54,6 @@ wss.on("connection", (client: WebSocket) => {
               });
             }, 100);
           const clts = clients.get(client.user.id);
-
           if (!clts) clients.set(client.user.id, [client]);
           else clients.get(client.user.id)?.push(client);
 

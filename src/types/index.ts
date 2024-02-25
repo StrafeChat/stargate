@@ -22,18 +22,13 @@ export interface User {
     username: string;
     avatar: string;
     global_name: string | null;
+    display_name: string;
+    discriminator: number;
 }
 export interface Presence {
     status: "online" | "offline" | "idle" | "dnd";
     status_text: string;
     online: boolean;
-}
-
-export interface User {
-    id: string;
-    created_at: Date;
-    presence: Presence
-    username: string;
 }
 
 export interface Space {

@@ -45,21 +45,22 @@ export const verifyToken = async (client: WebSocket, token: string) => {
 
       await Promise.all(members.rows.map(async (member) => {
         let user = await cassandra.execute(`
-          SELECT * FROM ${cassandra.keyspace}.users
+          SELECT username, global_name, avatar, flags, presence, discriminator, id FROM ${cassandra.keyspace}.users
           WHERE id = ?
-      `, [member.get("user_id")]);
+      `, [member.get("user_id")]);  
          member.user = user.rows[0];
+         member.user.display_name = user.rows[0].global_name ?? user.rows[0].username;
       }));
       await Promise.all(rooms.rows.map(async (room) => {
-        try {
+        // try {
             let messages = await cassandra.execute(`
             SELECT * FROM ${cassandra.keyspace}.messages
             WHERE room_id = ?
-            ORDER BY created_at DESC
             LIMIT  25
+            ALLOW FILTERING
         `, [room.get("id")]);
-            
             await Promise.all(messages.rows.map(async (message) => {
+                console.log(message)
                 let author = await cassandra.execute(`
                     SELECT * FROM ${cassandra.keyspace}.users
                     WHERE id = ?
@@ -67,13 +68,14 @@ export const verifyToken = async (client: WebSocket, token: string) => {
 
                 message.author = author.rows[0];
                 message.created_at = message.created_at.getTime();
+                message.author.display_name = author.rows[0].global_name ?? author.rows[0].username;
 
             }));
              room.messages = messages.rows ?? [];
              
-        } catch (error) {
-            room.messages = []; 
-        }
+        // } catch (error) {
+        //     room.messages = []; 
+        // }
       }));
 
       space.rooms = rooms.rows;
@@ -104,6 +106,8 @@ export const verifyToken = async (client: WebSocket, token: string) => {
         presence: user.rows[0].get("presence"),
         username: user.rows[0].get("username"),
         global_name: user.rows[0].get("global_name"),
+        display_name: user.rows[0].get("global_name") ?? user.rows[0].get("username"),
+        discriminator: user.rows[0].get("discriminator"),
         avatar: user.rows[0].get("avatar"),
         space_ids: user.rows[0].get("space_ids"),     
     }
