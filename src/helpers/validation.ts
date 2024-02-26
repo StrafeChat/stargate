@@ -45,22 +45,21 @@ export const verifyToken = async (client: WebSocket, token: string) => {
 
       await Promise.all(members.rows.map(async (member) => {
         let user = await cassandra.execute(`
-          SELECT username, global_name, avatar, flags, presence, discriminator, id FROM ${cassandra.keyspace}.users
+          SELECT username, global_name, avatar, flags, presence, discriminator, created_at, id FROM ${cassandra.keyspace}.users
           WHERE id = ?
       `, [member.get("user_id")]);  
          member.user = user.rows[0];
          member.user.display_name = user.rows[0].global_name ?? user.rows[0].username;
       }));
       await Promise.all(rooms.rows.map(async (room) => {
-        // try {
-            let messages = await cassandra.execute(`
-            SELECT * FROM ${cassandra.keyspace}.messages
-            WHERE room_id = ?
-            LIMIT  25
-            ALLOW FILTERING
-        `, [room.get("id")]);
-            await Promise.all(messages.rows.map(async (message) => {
-                console.log(message)
+         try {
+                let messages = await cassandra.execute(`
+                SELECT * FROM ${cassandra.keyspace}.messages
+                WHERE room_id = ?
+                LIMIT 25
+            `, [room.get("id")]);
+             
+           await Promise.all(messages.rows.map(async (message) => {
                 let author = await cassandra.execute(`
                     SELECT * FROM ${cassandra.keyspace}.users
                     WHERE id = ?
@@ -69,13 +68,12 @@ export const verifyToken = async (client: WebSocket, token: string) => {
                 message.author = author.rows[0];
                 message.created_at = message.created_at.getTime();
                 message.author.display_name = author.rows[0].global_name ?? author.rows[0].username;
-
-            }));
-             room.messages = messages.rows ?? [];
-             
-        // } catch (error) {
-        //     room.messages = []; 
-        // }
+           }));
+            room.messages = messages.rows;
+         } catch (error) {
+            console.log(error)
+            room.messages = []; 
+        }
       }));
 
       space.rooms = rooms.rows;
