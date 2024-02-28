@@ -26,7 +26,7 @@ wss.on("connection", (client: WebSocket) => {
 
   client.heartbeat = setTimeout(() => {
     client.close(ErrorCodes.SESSION_TIMED_OUT, ErrorMessages.SESSION_TIMED_OUT);
-  }, HEARTBEAT + 500);
+  }, HEARTBEAT + 1500);
 
   client.on("message", async (message) => {
     try {

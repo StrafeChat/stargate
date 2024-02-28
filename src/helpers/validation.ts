@@ -56,7 +56,6 @@ export const verifyToken = async (client: WebSocket, token: string) => {
                 let messages = await cassandra.execute(`
                 SELECT * FROM ${cassandra.keyspace}.messages
                 WHERE room_id = ?
-                LIMIT 25
             `, [room.get("id")]);
              
            await Promise.all(messages.rows.map(async (message) => {

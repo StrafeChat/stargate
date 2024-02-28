@@ -34,13 +34,17 @@ export const users = {
 
           let alreadySent: any[] = [];
 
-          client.send(
-            JSON.stringify({
-              op: OpCodes.DISPATCH,
-              event: "PRESENCE_UPDATE",
-              data: { user: client.user, presence: presenceUpdate },
-            })
-          );
+          const myClients = clients.get(client.user.id);
+          
+          for (const ws of myClients!) {
+            ws.send(
+              JSON.stringify({
+                op: OpCodes.DISPATCH,
+                event: "PRESENCE_UPDATE",
+                data: { user: client.user, presence: presenceUpdate },
+              })
+            );
+          }
 
           alreadySent.push(client.user.id);
 
@@ -54,8 +58,8 @@ export const users = {
           for (const member of space_members.rows) {
             const membersWs = clients.get(member.get("user_id"))
             if (membersWs)
-              for (const ws of membersWs) {
-               if (alreadySent.includes(ws.user.id)) break;
+              for (const ws of membersWs!) {
+                if (alreadySent.includes(ws.user.id)) break;
                 ws.send(
                   JSON.stringify({
                     op: OpCodes.DISPATCH,
