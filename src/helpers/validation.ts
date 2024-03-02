@@ -57,6 +57,7 @@ export const verifyToken = async (client: WebSocket, token: string) => {
                 SELECT * FROM ${cassandra.keyspace}.messages
                 WHERE room_id = ?
             `, [room.get("id")]);
+            
              
            await Promise.all(messages.rows.map(async (message) => {
                 let author = await cassandra.execute(`
@@ -64,11 +65,18 @@ export const verifyToken = async (client: WebSocket, token: string) => {
                     WHERE id = ?
                 `, [message.get("author_id")]);
 
+            if (message.embeds && message.embeds[0]) {
+                message.embeds.forEach((embed: any) => {
+                    if (embed.timestamp) embed.timestamp = embed.timestamp.getTime();
+                })
+            }
+
                 message.author = author.rows[0];
                 message.created_at = message.created_at.getTime();
                 message.author.display_name = author.rows[0].global_name ?? author.rows[0].username;
            }));
             room.messages = messages.rows;
+            
          } catch (error) {
             console.log(error)
             room.messages = []; 
