@@ -3,7 +3,7 @@ import { WebSocketServer } from "ws";
 import { ErrorCodes, ErrorMessages, HEARTBEAT, OpCodes, PORT } from "./config";
 import database, { redis, cassandra } from "./database";
 import { users } from "./database/collection";
-import { verifyToken } from "./helpers/validation";
+import { verifyToken, dataRevaluation } from "./helpers/validation";
 import { WebSocket } from "./types";
 
 const server = http.createServer();
@@ -58,6 +58,8 @@ wss.on("connection", (client: WebSocket) => {
           else clients.get(client.user.id)?.push(client);
 
           break;
+        case OpCodes.REFRESH:
+          await dataRevaluation(client)
         case OpCodes.HEARTBEAT:
           if (!client.verified)
             client.close(

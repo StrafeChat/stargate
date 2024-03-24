@@ -20,6 +20,7 @@ export enum OpCodes {
     HEARTBEAT = 1,
     IDENTIFY = 2,
     PRESENCE = 3,
+    REFRESH = 4, // fetch new information about the client, returns the same as IDENTIFY but works only after authentication
     HELLO = 10,
 }
 
