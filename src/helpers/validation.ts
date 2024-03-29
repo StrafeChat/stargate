@@ -35,7 +35,9 @@ const fetchData = async (id: string): Promise<{user: types.ResultSet, spaces: ty
           WHERE id = ?
       `, [member.get("user_id")]);
         member.user = user.rows[0];
-        member.user.display_name = user.rows[0].global_name ?? user.rows[0].username;
+        member.user.username = user.rows[0].username ?? "Deleted User";
+        member.user.display_name = user.rows[0].global_name ?? member.user.username;
+        member.user.discriminator = user.rows[0].discriminator ?? 0;
       }));
       await Promise.all(rooms.rows.map(async (room) => {
         try {
@@ -59,7 +61,9 @@ const fetchData = async (id: string): Promise<{user: types.ResultSet, spaces: ty
 
             message.author = author.rows[0];
             message.created_at = message.created_at.getTime();
-            message.author.display_name = author.rows[0].global_name ?? author.rows[0].username;
+            message.author.username = user.rows[0].username ?? "Deleted User"
+            message.author.discriminator = user.rows[0].discriminator ?? 0;
+            message.author.display_name = author.rows[0].global_name ?? message.author.username;
           }));
           room.messages = messages.rows;
 
