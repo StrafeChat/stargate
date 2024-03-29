@@ -73,7 +73,9 @@ export const verifyToken = async (client: WebSocket, token: string) => {
 
                 message.author = author.rows[0];
                 message.created_at = message.created_at.getTime();
-                message.author.display_name = author.rows[0].global_name ?? author.rows[0].username;
+                message.author.display_name = author.rows[0].global_name ?? author.rows[0].username ?? "Deleted User";
+                message.author.username = author.rows[0].username ?? "Deleted User";
+                message.author.discriminator = author.rows[0].discriminator ?? 0;
            }));
             room.messages = messages.rows;
             
