@@ -6,6 +6,7 @@ export interface WebSocket extends ws.WebSocket {
     user: User;
     heartbeat?: NodeJS.Timeout;
     verified?: boolean;
+    token: string;
 }
 
 export interface Presence {
