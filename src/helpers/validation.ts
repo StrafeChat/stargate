@@ -131,8 +131,12 @@ export const verifyToken = async (client: WebSocket, token: string) => {
           SELECT username, global_name, avatar, flags, presence, discriminator, created_at, id FROM ${cassandra.keyspace}.users
           WHERE id = ?
       `, [member.get("user_id")]);  
-         member.user = user.rows[0];
-         member.user.display_name = user.rows[0].global_name ?? user.rows[0].username;
+      
+      member.user = user.rows[0];
+      member.user.username = user.rows[0].username ?? "Deleted User";
+      member.user.display_name = user.rows[0].global_name ?? member.user.username;
+      console.log(member.user.display_name)
+      member.user.discriminator = user.rows[0].discriminator ?? 0;
       }));
       await Promise.all(rooms.rows.map(async (room) => {
          try {
@@ -154,11 +158,12 @@ export const verifyToken = async (client: WebSocket, token: string) => {
                 })
             }
 
-                message.author = author.rows[0];
-                message.created_at = message.created_at.getTime();
-                message.author.display_name = author.rows[0].global_name ?? author.rows[0].username ?? "Deleted User";
-                message.author.username = author.rows[0].username ?? "Deleted User";
-                message.author.discriminator = author.rows[0].discriminator ?? 0;
+            message.author = author.rows[0];
+            message.created_at = message.created_at.getTime();
+            message.author.username = user.rows[0].username ?? "Deleted User";
+            message.author.discriminator = user.rows[0].discriminator ?? 0;
+            message.author.display_name = author.rows[0].global_name ?? message.author.username;
+            console.log(message.author.display_name)
            }));
             room.messages = messages.rows;
             
