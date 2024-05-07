@@ -61,12 +61,11 @@ const fetchData = async (id: string): Promise<{user: types.ResultSet, spaces: ty
 
             message.author = author.rows[0];
             message.created_at = message.created_at.getTime();
-            message.author.username = user.rows[0].username ?? "Deleted User";
-            message.author.discriminator = user.rows[0].discriminator ?? 0;
+            message.author.username = author.rows[0].username ?? "Deleted User";
+            message.author.discriminator = author.rows[0].discriminator ?? 0;
             message.author.display_name = author.rows[0].global_name ?? message.author.username;
           }));
           room.messages = messages.rows;
-
         } catch (error) {
           console.log(error)
           room.messages = [];
@@ -157,8 +156,8 @@ export const verifyToken = async (client: WebSocket, token: string) => {
 
             message.author = author.rows[0];
             message.created_at = message.created_at.getTime();
-            message.author.username = user.rows[0].username ?? "Deleted User";
-            message.author.discriminator = user.rows[0].discriminator ?? 0;
+            message.author.username = author.rows[0].username ?? "Deleted User";
+            message.author.discriminator = author.rows[0].discriminator ?? 0;
             message.author.display_name = author.rows[0].global_name ?? message.author.username;
            }));
             room.messages = messages.rows;
