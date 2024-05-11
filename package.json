@@ -13,13 +13,14 @@
   "dependencies": {
     "better-cassandra": "^1.1.1",
     "cassandra-driver": "^4.7.2",
-    "dotenv": "^16.3.1",
-    "redis": "^4.6.12",
-    "ws": "^8.16.0"
+    "dotenv": "^16.4.5",
+    "redis": "^4.6.13",
+    "ws": "^8.17.0"
   },
   "devDependencies": {
-    "@types/node": "^20.11.0",
+    "@types/node": "^20.12.8",
     "@types/ws": "^8.5.10",
-    "nodemon": "^3.0.2"
+    "nodemon": "^3.1.0",
+    "ts-node": "^10.9.2"
   }
 }

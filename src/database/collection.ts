@@ -1,23 +1,81 @@
+import { CLIENT_RENEG_LIMIT } from "tls";
 import { cassandra } from ".";
 import { OpCodes } from "../config";
 import { Presence, WebSocket } from "../types";
+import { clients } from "..";
 
 export const users = {
-    updatePresence: async (client: WebSocket, presence: Partial<Presence>) => {
+  updatePresence: async (client: WebSocket, presence: Partial<Presence>) => {
+    const presenceUpdate = {
+      status: presence.status ?? client.user.presence.status,
+      status_text: presence.status_text ?? client.user.presence.status_text,
+      online: presence.online ?? client.user.presence.online,
+    };
 
-        const presenceUpdate = { status: presence.status ?? client.user.presence.status, status_text: presence.status_text ?? client.user.presence.status_text, online: presence.online ?? client.user.presence.online };
+    if (
+      presenceUpdate.status === client.user.presence.status &&
+      presenceUpdate.status_text === client.user.presence.status_text &&
+      presenceUpdate.online === client.user.presence.online
+    )
+      return;
 
-        if (presenceUpdate.status === client.user.presence.status && presenceUpdate.status_text === client.user.presence.status_text && presenceUpdate.online === client.user.presence.online) return;
-
-        await cassandra.execute(`
+    await cassandra
+      .execute(
+        `
         UPDATE ${cassandra.keyspace}.users
         SET presence=?
         WHERE id=?;
-        `, [presenceUpdate, client.user.id], { prepare: true }).then(() => {
-            client.send(JSON.stringify({ op: OpCodes.DISPATCH, event: "PRESENCE_UPDATE", data: { user: client.user, presence: presenceUpdate } }));
-            client.user.presence = presenceUpdate;
-        }).catch((err) => {
-            console.error(err);
-        });
-    }
-}
+        `,
+        [presenceUpdate, client.user.id],
+        { prepare: true }
+      )
+      .then(async () => {
+          client.user.presence = presenceUpdate;
+
+          let alreadySent: any[] = [];
+
+          const myClients = clients.get(client.user.id);
+          
+          for (const ws of myClients!) {
+            ws.send(
+              JSON.stringify({
+                op: OpCodes.DISPATCH,
+                event: "PRESENCE_UPDATE",
+                data: { user: client.user, presence: presenceUpdate },
+              })
+            );
+            alreadySent.push(ws.id);
+          }
+
+        for (const id of client.user.space_ids || []) {
+          const space_members = await cassandra.execute(`
+            SELECT user_id FROM ${cassandra.keyspace}.space_members
+            WHERE space_id=?`,
+            [id]
+          );
+
+          for (const member of space_members.rows) {
+            const membersWs = clients.get(member.get("user_id"))
+            if (membersWs) {
+          
+              for (const ws of membersWs!) { 
+                 if (alreadySent.includes(ws.id)) break;     
+                ws.send(
+                  JSON.stringify({
+                    op: OpCodes.DISPATCH,
+                    event: "PRESENCE_UPDATE",
+                    data: { user: client.user, presence: presenceUpdate },
+                  })
+                );
+                alreadySent.push(ws.id);
+              }
+            }
+          }
+        }
+      })
+
+      .catch((err) => {
+        console.error(err);
+      });
+  },
+};
