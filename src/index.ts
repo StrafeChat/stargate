@@ -90,11 +90,6 @@ wss.on("connection", (client: WebSocket) => {
   });
 
   client.on("close", async () => {
-    if (client.verified)
-      await users.updatePresence(client, {
-        ...client.user.presence,
-        online: false,
-      });
     clearTimeout(client.heartbeat);
     const clientsArray = clients.get(client.user?.id);
 
@@ -103,7 +98,14 @@ wss.on("connection", (client: WebSocket) => {
       if (index !== -1) clientsArray.splice(index, 1);
     }
 
-    if (clientsArray?.length === 0) clients.delete(client.user?.id);
+    if (clientsArray?.length === 0) {
+      if (client.verified)
+        await users.updatePresence(client, {
+          ...client.user.presence,
+          online: false,
+        });
+      clients.delete(client.user?.id);
+    }
 
     client.terminate();
   });

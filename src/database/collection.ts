@@ -44,9 +44,8 @@ export const users = {
                 data: { user: client.user, presence: presenceUpdate },
               })
             );
+            alreadySent.push(ws.id);
           }
-
-          alreadySent.push(client.user.id);
 
         for (const id of client.user.space_ids || []) {
           const space_members = await cassandra.execute(`
@@ -57,9 +56,10 @@ export const users = {
 
           for (const member of space_members.rows) {
             const membersWs = clients.get(member.get("user_id"))
-            if (membersWs)
-              for (const ws of membersWs!) {
-                if (alreadySent.includes(ws.user.id)) break;
+            if (membersWs) {
+          
+              for (const ws of membersWs!) { 
+                 if (alreadySent.includes(ws.id)) break;     
                 ws.send(
                   JSON.stringify({
                     op: OpCodes.DISPATCH,
@@ -67,8 +67,9 @@ export const users = {
                     data: { user: client.user, presence: presenceUpdate },
                   })
                 );
-                alreadySent.push(ws.user.id)
+                alreadySent.push(ws.id);
               }
+            }
           }
         }
       })

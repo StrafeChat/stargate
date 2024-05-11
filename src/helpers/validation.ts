@@ -191,6 +191,7 @@ export const verifyToken = async (client: WebSocket, token: string) => {
     client.spaces = spaces.rows ?? null;
     client.verified = true;
     client.token = token;
+    client.id = generateUniqueClientId();
     client.user = {
         id,
         created_at: user.rows[0].get("created_at"),
@@ -241,4 +242,15 @@ export const dataRevaluation = async (client: WebSocket) => {
     avatar: user.rows[0].get("avatar"),
     space_ids: user.rows[0].get("space_ids"),
   }
+}
+
+function generateUniqueClientId(length: number = 20): string {
+  const characters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+  let uniqueId = '';
+
+  for (let i = 0; i < length; i++) {
+      uniqueId += characters.charAt(Math.floor(Math.random() * characters.length));
+  }
+
+  return uniqueId;
 }
