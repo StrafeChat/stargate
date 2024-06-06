@@ -44,6 +44,7 @@ const fetchData = async (id: string): Promise<{user: types.ResultSet, spaces: ty
           let messages = await cassandra.execute(`
                 SELECT * FROM ${cassandra.keyspace}.messages
                 WHERE room_id = ?
+                LIMIT 15;
             `, [room.get("id")]);
 
 
@@ -135,38 +136,51 @@ export const verifyToken = async (client: WebSocket, token: string) => {
       member.user.discriminator = user.rows[0].discriminator ?? 0;
       }));
       await Promise.all(rooms.rows.map(async (room) => {
-         try {
-                let messages = await cassandra.execute(`
-                SELECT * FROM ${cassandra.keyspace}.messages
+        try {
+            let messageIds = await cassandra.execute(`
+                SELECT * FROM ${cassandra.keyspace}.messages_by_room
                 WHERE room_id = ?
+                ORDER BY id DESC
+                LIMIT 50;
             `, [room.get("id")]);
-            
-             
-           await Promise.all(messages.rows.map(async (message) => {
-                let author = await cassandra.execute(`
+    
+            let messagesArray:any = [];
+    
+            await Promise.all(messageIds.rows.map(async (messageId) => {
+                let messagesResult = await cassandra.execute(`
+                    SELECT * FROM ${cassandra.keyspace}.messages
+                    WHERE id = ?
+                    LIMIT 1;
+                `, [messageId.get("id")]);
+    
+                const message = messagesResult.rows[0];
+    
+                let authorResult = await cassandra.execute(`
                     SELECT * FROM ${cassandra.keyspace}.users
                     WHERE id = ?
                 `, [message.get("author_id")]);
+    
+                if (message.embeds && message.embeds[0]) {
+                    message.embeds.forEach((embed: any) => {
+                        if (embed.timestamp) embed.timestamp = embed.timestamp.getTime();
+                    });
+                }
+    
+                message.author = authorResult.rows[0];
+                message.created_at = message.created_at.getTime();
+                message.author.username = authorResult.rows[0].username ?? "Deleted User";
+                message.author.discriminator = authorResult.rows[0].discriminator ?? 0;
+                message.author.display_name = authorResult.rows[0].global_name ?? message.author.username;
+    
+                messagesArray.push(message);
+            }));
 
-            if (message.embeds && message.embeds[0]) {
-                message.embeds.forEach((embed: any) => {
-                    if (embed.timestamp) embed.timestamp = embed.timestamp.getTime();
-                })
-            }
-
-            message.author = author.rows[0];
-            message.created_at = message.created_at.getTime();
-            message.author.username = author.rows[0].username ?? "Deleted User";
-            message.author.discriminator = author.rows[0].discriminator ?? 0;
-            message.author.display_name = author.rows[0].global_name ?? message.author.username;
-           }));
-            room.messages = messages.rows;
-            
-         } catch (error) {
-            console.log(error)
-            room.messages = []; 
+            room.messages = messagesArray;
+        } catch (error) {
+            console.log(error);
+            room.messages = [];
         }
-      }));
+    }));
 
       space.rooms = rooms.rows;
       space.members = members.rows;
