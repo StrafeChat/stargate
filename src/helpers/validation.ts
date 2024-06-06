@@ -113,12 +113,13 @@ export const verifyToken = async (client: WebSocket, token: string) => {
       WHERE id IN ?
   `, [user.rows[0].get("space_ids") || []]);
 
+
   await Promise.all(spacesDb.rows.map(async (space: any) => {
       let rooms = await cassandra.execute(`
           SELECT * FROM ${cassandra.keyspace}.rooms
           WHERE id IN ?
-      `, [space.get("room_ids") || []]);
 
+      `, [space.get("room_ids") || []]);
       let members = await cassandra.execute(`
           SELECT * FROM ${cassandra.keyspace}.space_members
           WHERE space_id = ?
@@ -126,6 +127,7 @@ export const verifyToken = async (client: WebSocket, token: string) => {
 
       await Promise.all(members.rows.map(async (member) => {
         let user = await cassandra.execute(`
+
           SELECT username, global_name, avatar, flags, presence, discriminator, created_at, id FROM ${cassandra.keyspace}.users
           WHERE id = ?
       `, [member.get("user_id")]);  
@@ -241,6 +243,7 @@ export const dataRevaluation = async (client: WebSocket) => {
       },
       spaces: spaces.rows ?? null
     }
+
   }))
 
   client.spaces = spaces.rows ?? null;
