@@ -143,7 +143,7 @@ export const verifyToken = async (client: WebSocket, token: string) => {
                 SELECT * FROM ${cassandra.keyspace}.messages_by_room
                 WHERE room_id = ?
                 ORDER BY id DESC
-                LIMIT 50;
+                LIMIT 100;
             `, [room.get("id")]);
     
             let messagesArray:any = [];
