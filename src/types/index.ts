@@ -23,6 +23,7 @@ export interface User {
     presence: Presence
     username: string;
     avatar: string;
+    flags: number;
     global_name: string | null;
     display_name: string;
     discriminator: number;
