@@ -15,7 +15,7 @@
     "cassandra-driver": "^4.7.2",
     "dotenv": "^16.4.5",
     "redis": "^4.6.13",
-    "ws": "^8.17.0"
+    "ws": "^8.17.1"
   },
   "devDependencies": {
     "@types/node": "^20.14.8",
