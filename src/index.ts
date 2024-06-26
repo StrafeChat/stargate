@@ -10,6 +10,12 @@ const server = http.createServer();
 const wss = new WebSocketServer({ noServer: true });
 const clients = new Map<string, WebSocket[]>();
 
+export interface UserInfo {
+  id: string
+}
+
+const voiceUsers = new Map<string, UserInfo[]>();
+
 wss.on("error", (err) => {
   console.error(err);
 });
@@ -45,7 +51,8 @@ wss.on("connection", (client: WebSocket) => {
     try {
       switch (op) {
         case OpCodes.IDENTIFY:
-          await verifyToken(client, data.token);
+          console.log(voiceUsers);
+          await verifyToken(client, data.token, voiceUsers);
           if (client.verified)
             setTimeout(async () => {
               await users.updatePresence(client, {
@@ -124,24 +131,49 @@ server.listen(PORT, async () => {
   redis.subscribe("stargate", async (res) => {
     const { event, data } = JSON.parse(res);
     const space_members = await cassandra.execute(`
-    SELECT user_id FROM ${cassandra.keyspace}.space_members
-    WHERE space_id=?`,
-    [data.space_id]
-  );
+      SELECT user_id FROM ${cassandra.keyspace}.space_members
+      WHERE space_id=?`,
+      [data.space_id]
+    );
 
-  for (const member of space_members.rows) {
-    const membersWs = clients.get(member.get("user_id"))
-    if (membersWs)
-      for (const ws of membersWs) {
-        ws.send(
-          JSON.stringify({
-            op: OpCodes.DISPATCH,
-            event: event.toUpperCase(),
-            data: data,
-          })
-        );
+    if (event.toUpperCase() === "VOICE_JOIN") {
+      console.log("join");
+      if (!voiceUsers.has(data.room)) voiceUsers.set(data.room, []);
+      const room = voiceUsers.get(data.room)!;
+      room.push({
+        id: data.user
+      });
+      console.log("added");
+      voiceUsers.set(data.room, room);
+    }
+    if (event.toUpperCase() === "VOICE_LEAVE") {
+      console.log("leave");
+      if (voiceUsers.has(data.room)) {
+        const room = voiceUsers.get(data.room)!;
+        const idx = room.findIndex(e => {
+          return e.id === data.user
+        });
+        if (idx > -1) {
+          room.splice(idx, 1);
+          voiceUsers.set(data.room, room);
+        }
       }
-  }
+    }
+
+    for (const member of space_members.rows) {
+      const membersWs = clients.get(member.get("user_id"))
+      if (membersWs) {
+        for (const ws of membersWs) {
+          ws.send(
+            JSON.stringify({
+              op: OpCodes.DISPATCH,
+              event: event.toUpperCase(),
+              data: data,
+            })
+          );
+        }
+      }
+    }
   });
   console.info("Listening on port " + PORT);
 });
