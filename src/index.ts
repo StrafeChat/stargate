@@ -66,7 +66,9 @@ wss.on("connection", (client: WebSocket) => {
               ErrorCodes.NOT_AUTHENTICATED,
               ErrorMessages.NOT_AUTHENTICATED
             );
-          else client.heartbeat?.refresh();
+          else { client.heartbeat?.refresh();
+            console.info(`[CLIENT] ${client.user.username} has sent a heartbeat.`)
+          }
           break;
         case OpCodes.PRESENCE:
           if (!client.verified)
