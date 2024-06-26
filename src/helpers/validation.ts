@@ -2,6 +2,7 @@ import { types } from "cassandra-driver";
 import { ErrorCodes, ErrorMessages, OpCodes } from "../config";
 import { cassandra } from "../database";
 import { WebSocket } from "../types";
+import { UserInfo } from "..";
 
 const fetchData = async (id: string): Promise<{user: types.ResultSet, spaces: types.ResultSet}> => {
   const user = await cassandra.execute(`
@@ -84,7 +85,7 @@ const fetchData = async (id: string): Promise<{user: types.ResultSet, spaces: ty
 
 }
 
-export const verifyToken = async (client: WebSocket, token: string) => {
+export const verifyToken = async (client: WebSocket, token: string, voiceUsers: Map<string, UserInfo[]>) => {
     if (client.verified) return client.close(ErrorCodes.ALREADY_AUTHENTICATED, ErrorMessages.ALREADY_AUTHENTICATED);
 
     if (typeof token != "string") return client.close(ErrorCodes.INVALID_TOKEN, ErrorMessages.INVALID_TOKEN);
@@ -178,6 +179,8 @@ export const verifyToken = async (client: WebSocket, token: string) => {
             }));
 
             room.messages = messagesArray;
+
+            if (room.type === 2) room.participants = voiceUsers.get(room.id) || [];
         } catch (error) {
             console.log(error);
             room.messages = [];
