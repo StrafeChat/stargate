@@ -51,7 +51,6 @@ wss.on("connection", (client: WebSocket) => {
     try {
       switch (op) {
         case OpCodes.IDENTIFY:
-          console.log(voiceUsers);
           await verifyToken(client, data.token, voiceUsers);
           if (client.verified)
             setTimeout(async () => {
@@ -137,17 +136,14 @@ server.listen(PORT, async () => {
     );
 
     if (event.toUpperCase() === "VOICE_JOIN") {
-      console.log("join");
       if (!voiceUsers.has(data.room)) voiceUsers.set(data.room, []);
       const room = voiceUsers.get(data.room)!;
       room.push({
         id: data.user
       });
-      console.log("added");
       voiceUsers.set(data.room, room);
     }
     if (event.toUpperCase() === "VOICE_LEAVE") {
-      console.log("leave");
       if (voiceUsers.has(data.room)) {
         const room = voiceUsers.get(data.room)!;
         const idx = room.findIndex(e => {
