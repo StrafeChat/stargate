@@ -6,7 +6,7 @@ import { UserInfo } from "..";
 
 const fetchData = async (id: string): Promise<{user: types.ResultSet, spaces: types.ResultSet}> => {
   const user = await cassandra.execute(`
-    SELECT last_pass_reset, secret, username, discriminator, global_name, avatar, bot, system, mfa_enabled, banner, accent_color, locale, verified, email, flags, premium_type, public_flags, avatar_decoration, created_at, edited_at, space_ids, presence FROM ${cassandra.keyspace}.users
+    SELECT last_pass_reset, secret, username, discriminator, global_name, avatar, bot, system, mfa_enabled, banner, accent_color, locale, verified, email, flags, premium_type, public_flags, avatar_decoration, created_at, edited_at, space_ids, presence, friends FROM ${cassandra.keyspace}.users
       WHERE id=?
       LIMIT 1;
     `, [id]);
