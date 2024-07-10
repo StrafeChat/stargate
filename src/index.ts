@@ -125,7 +125,7 @@ server.on("upgrade", (req, socket, head) => {
   });
 });
 
-server.listen(PORT, async () => {
+server.listen(PORT, "0.0.0.0", async () => {
   await database.init();
   redis.subscribe("stargate", async (res) => {
     const { event, data } = JSON.parse(res);
@@ -168,6 +168,23 @@ server.listen(PORT, async () => {
             })
           );
         }
+      }
+    }
+  });
+  redis.subscribe("stargate_personal", async (res) => {
+    const { event, data, users } = JSON.parse(res);
+
+    for (const user of users) {
+      if (!clients.has(user)) return;
+      const membersWs = clients.get(user)!;
+      for (const ws of membersWs) {
+        ws.send(
+          JSON.stringify({
+            op: OpCodes.DISPATCH,
+            event: event.toUpperCase(),
+            data: data,
+          })
+        );
       }
     }
   });
