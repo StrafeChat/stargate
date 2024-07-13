@@ -101,7 +101,7 @@ export const verifyToken = async (client: WebSocket, token: string, voiceUsers: 
     const secret = atob(splitToken[2]);
 
     const user = await cassandra.execute(`
-    SELECT last_pass_reset, secret, username, discriminator, global_name, avatar, bot, system, mfa_enabled, banner, accent_color, locale, verified, email, flags, premium_type, public_flags, avatar_decoration, created_at, edited_at, space_ids, presence FROM ${cassandra.keyspace}.users
+    SELECT last_pass_reset, secret, username, discriminator, global_name, avatar, bot, system, mfa_enabled, banner, accent_color, locale, verified, email, flags, premium_type, public_flags, avatar_decoration, created_at, edited_at, space_ids, presence, friends FROM ${cassandra.keyspace}.users
       WHERE id=?
       LIMIT 1;
     `, [id]);
@@ -221,7 +221,8 @@ export const verifyToken = async (client: WebSocket, token: string, voiceUsers: 
         display_name: user.rows[0].get("global_name") ?? user.rows[0].get("username"),
         discriminator: user.rows[0].get("discriminator"),
         avatar: user.rows[0].get("avatar"),
-        space_ids: user.rows[0].get("space_ids"),     
+        space_ids: user.rows[0].get("space_ids"),
+        friends: user.rows[0].get("friends") 
     }
 }
 

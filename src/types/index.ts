@@ -27,6 +27,7 @@ export interface User {
     global_name: string | null;
     display_name: string;
     discriminator: number;
+    friends?: string[];
 }
 export interface Presence {
     status: "online" | "offline" | "idle" | "dnd";
