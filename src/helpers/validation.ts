@@ -66,6 +66,7 @@ const fetchData = async (id: string): Promise<{user: types.ResultSet, spaces: ty
             message.author.username = author.rows[0].username ?? "Deleted User";
             message.author.discriminator = author.rows[0].discriminator ?? 0;
             message.author.display_name = author.rows[0].global_name ?? message.author.username;
+
           }));
           room.messages = messages.rows;
         } catch (error) {
@@ -113,7 +114,6 @@ export const verifyToken = async (client: WebSocket, token: string, voiceUsers: 
       SELECT * FROM ${cassandra.keyspace}.spaces
       WHERE id IN ?
   `, [user.rows[0].get("space_ids") || []]);
-
 
   await Promise.all(spacesDb.rows.map(async (space: any) => {
       let rooms = await cassandra.execute(`
@@ -185,6 +185,16 @@ export const verifyToken = async (client: WebSocket, token: string, voiceUsers: 
             console.log(error);
             room.messages = [];
         }
+
+        let unreadsArray:any = [];
+        const unreadResults = await cassandra.execute(`
+          SELECT * FROM ${cassandra.keyspace}.room_unreads
+          WHERE room_id = ?
+          AND user_id = ?
+        `, [room.get("id"), id]);
+
+        unreadsArray = unreadResults.rows;
+        room.unreads = unreadsArray;
     }));
 
       space.rooms = rooms.rows;
