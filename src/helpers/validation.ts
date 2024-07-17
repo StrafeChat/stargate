@@ -231,7 +231,8 @@ export const verifyToken = async (client: WebSocket, token: string, voiceUsers: 
         display_name: user.rows[0].get("global_name") ?? user.rows[0].get("username"),
         discriminator: user.rows[0].get("discriminator"),
         avatar: user.rows[0].get("avatar"),
-        space_ids: user.rows[0].get("space_ids"),     
+        space_ids: user.rows[0].get("space_ids"),
+        friends: user.rows[0].get("friends") 
     }
 }
 

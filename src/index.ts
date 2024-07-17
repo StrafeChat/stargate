@@ -172,6 +172,7 @@ server.listen(PORT, "0.0.0.0", async () => {
     }
   });
   redis.subscribe("stargate_personal", async (res) => {
+    console.log(res);
     const { event, data, users } = JSON.parse(res);
 
     for (const user of users) {
