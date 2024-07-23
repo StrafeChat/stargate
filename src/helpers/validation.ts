@@ -186,7 +186,7 @@ export const verifyToken = async (client: WebSocket, token: string, voiceUsers: 
             room.messages = [];
         }
 
-        let unreadsArray:any = [];
+        let unreadsArray: any = [];
         const unreadResults = await cassandra.execute(`
           SELECT * FROM ${cassandra.keyspace}.room_unreads
           WHERE room_id = ?
@@ -195,6 +195,16 @@ export const verifyToken = async (client: WebSocket, token: string, voiceUsers: 
 
         unreadsArray = unreadResults.rows;
         room.unreads = unreadsArray;
+
+        let mentionsArray: any = [];
+        const mentionResults = await cassandra.execute(`
+          SELECT * FROM ${cassandra.keyspace}.room_mentions
+          WHERE room_id = ?
+          AND user_id = ?
+        `, [room.get("id"), id]);
+
+        mentionsArray = mentionResults.rows;
+        room.mentions = mentionsArray;
     }));
 
       space.rooms = rooms.rows;
