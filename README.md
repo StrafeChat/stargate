@@ -1,2 +1,4 @@
-# stargate
-WebSocket Server for Strafe
+# Stargate
+
+WebSocket Server for the StrafeChat app.
+Currently being rewritten in Go Fiber.
