@@ -7,9 +7,6 @@ import (
 
 	"github.com/StrafeChat/stargate/src/database"
 	"github.com/StrafeChat/stargate/src/events"
-	"github.com/StrafeChat/stargate/src/format"
-	"github.com/StrafeChat/stargate/src/repository"
-	"github.com/StrafeChat/stargate/src/services"
 	"github.com/gorilla/websocket"
 	"github.com/joho/godotenv"
 )
@@ -25,51 +22,39 @@ func main() {
 		log.Printf("Error loading .env file: %v", err)
 	}
 
-	if err := database.InitScyllaDB(); err != nil {
+	if err := database.InitDB(); err != nil {
 		log.Fatalf("Failed to initialize database: %v", err)
 	}
-	defer database.CloseScyllaDB()
+	defer database.CloseDB()
 
-
-	notificationRepo := repository.NewNotificationRepository(database.GetSession())
-
-	notificationService := services.NewNotificationService(notificationRepo)
+	// Start event listener
+	go events.EventManager.StartEventListener()
 
 	http.HandleFunc("/events", func(w http.ResponseWriter, r *http.Request) {
 		conn, err := upgrader.Upgrade(w, r, nil)
 		if err != nil {
-			log.Printf("WebSocket upgrade failed: %v", err)
+			log.Printf("Error upgrading connection: %v", err)
 			return
 		}
 
-		log.Printf("New WebSocket connection from %s", r.RemoteAddr)
+		// Create WebSocket handler with request for format selection
+		handler := events.NewWebSocketHandler(conn, r)
 
-		formatParam := r.URL.Query().Get("format")
-		if formatParam == "" {
-			formatParam = "json"
-		}
-
-		encoder, err := format.GetEncoder(formatParam)
-		if err != nil {
-			log.Printf("Invalid format %s, defaulting to JSON", formatParam)
-			encoder = &format.JSONEncoder{}
-		}
-
-		wsHandler := events.NewWebSocketHandler(conn, encoder, notificationService)
-		defer wsHandler.Close()
+		defer func() {
+			handler.Close()
+		}()
 
 		for {
-			messageType, message, err := conn.ReadMessage()
+			messageType, p, err := conn.ReadMessage()
 			if err != nil {
-				if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
-					log.Printf("WebSocket error: %v", err)
-				}
+				log.Printf("Error reading message: %v", err)
 				break
 			}
 
-			if err := wsHandler.HandlePayload(messageType, message); err != nil {
-				log.Printf("Error handling payload: %v", err)
-				break
+			if messageType == websocket.TextMessage || messageType == websocket.BinaryMessage {
+				if err := handler.HandlePayload(messageType, p); err != nil {
+					log.Printf("Error handling payload: %v", err)
+				}
 			}
 		}
 	})
@@ -79,9 +64,8 @@ func main() {
 		port = "8080"
 	}
 
-	addr := ":" + port
-	log.Printf("WebSocket server starting on %s", addr)
-	if err := http.ListenAndServe(addr, nil); err != nil {
-		log.Fatalf("Server failed to start: %v", err)
+	log.Printf("Server starting on port %s", port)
+	if err := http.ListenAndServe(":"+port, nil); err != nil {
+		log.Fatal(err)
 	}
 }

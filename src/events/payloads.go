@@ -27,21 +27,15 @@ type HeartbeatPayload struct {
 	Timestamp int64 `json:"timestamp" msgpack:"timestamp"`
 }
 
-type HeartbeatAckPayload struct {
-	BasePayload
-	Timestamp int64 `json:"timestamp" msgpack:"timestamp"`
-}
-
 type MessagePayload struct {
 	BasePayload
 	ChannelID string `json:"channel_id" msgpack:"channel_id"`
 	Content   string `json:"content" msgpack:"content"`
 }
 
-type ReadyPayload struct {
+type HeartbeatAckPayload struct {
 	BasePayload
-	UserID   string `json:"user_id" msgpack:"user_id"`
-	Username string `json:"username" msgpack:"username"`
+	Timestamp int64 `json:"timestamp" msgpack:"timestamp"`
 }
 
 type PingPayload struct {

@@ -30,6 +30,14 @@ type UserPresence struct {
 type UserDetails struct {
 	ID           string       `json:"id"`
 	Username     string       `json:"username"`
+	Discriminator int         `json:"discriminator"`
+	Email        string       `json:"email"`
+	DisplayName  string       `json:"display_name"`
+	Avatar       string       `json:"avatar"`
+	Banner       string       `json:"banner"`
+	Bot          bool         `json:"bot"`
+	System       bool         `json:"system"`
+	Flags        int          `json:"flags"`
 	Presence     UserPresence `json:"presence"`
 }
 
@@ -77,8 +85,15 @@ func (r *UserRepository) GetUserDetails(userID string) (UserDetails, error) {
 
 	var details UserDetails
 	var presence Presence
-	if err := r.session.Query("SELECT id, username, presence FROM users WHERE id = ?", 
-		userID).Scan(&details.ID, &details.Username, &presence); err != nil {
+	var email string
+	var displayName string
+	var avatar string
+	var banner string
+	var bot bool
+	var system bool
+	var flags int
+	if err := r.session.Query("SELECT id, username, discriminator, email, display_name, avatar, banner, bot, system, flags, presence FROM users WHERE id = ?", 
+		userID).Scan(&details.ID, &details.Username, &details.Discriminator, &email, &displayName, &avatar, &banner, &bot, &system, &flags, &presence); err != nil {
 		log.Printf("Error fetching user details: %v", err)
 		if err == gocql.ErrNotFound {
 			return UserDetails{}, ErrUserNotFound
@@ -86,6 +101,13 @@ func (r *UserRepository) GetUserDetails(userID string) (UserDetails, error) {
 		return UserDetails{}, err
 	}
 
+	details.Email = email
+	details.DisplayName = displayName
+	details.Avatar = avatar
+	details.Banner = banner
+	details.Bot = bot
+	details.System = system
+	details.Flags = flags
 	details.Presence = UserPresence{
 		Online:       presence.Online,
 		Status:       presence.Status,
@@ -135,4 +157,129 @@ func (r *UserRepository) SetUserOffline(userID string, sessionToken string) erro
 
 	return r.session.Query("UPDATE users SET presence = ? WHERE id = ?",
 		presence, userID).Exec()
+}
+
+type RelationshipType int
+
+const (
+	RelationshipTypeFriend RelationshipType = iota
+	RelationshipTypePending
+	RelationshipTypeOutgoing
+)
+
+type Relationship struct {
+	ID          string    `json:"id"`
+	SenderID    string    `json:"sender_id"`
+	RecipientID string    `json:"recipient_id"`
+	CreatedAt   time.Time `json:"created_at"`
+}
+
+// GetRelatedUserIDs retrieves all user IDs that the given user has relationships with
+func (r *UserRepository) GetRelatedUserIDs(userID string) ([]string, error) {
+	if r.session == nil {
+		return nil, ErrDatabaseNotInitialized
+	}
+
+	relatedUsers := make(map[string]bool) // Using map to deduplicate IDs
+
+	// Get IDs where user is sender (get recipient_ids)
+	senderIter := r.session.Query("SELECT recipient_id FROM relationships_by_sender WHERE sender_id = ?", userID).Iter()
+	var otherID string
+	for senderIter.Scan(&otherID) {
+		relatedUsers[otherID] = true
+	}
+	if err := senderIter.Close(); err != nil {
+		return nil, err
+	}
+
+	// Get IDs where user is recipient (get sender_ids)
+	recipientIter := r.session.Query("SELECT sender_id FROM relationships_by_recipient WHERE recipient_id = ?", userID).Iter()
+	for recipientIter.Scan(&otherID) {
+		relatedUsers[otherID] = true
+	}
+	if err := recipientIter.Close(); err != nil {
+		return nil, err
+	}
+
+	// Convert map keys to slice
+	userIDs := make([]string, 0, len(relatedUsers))
+	for id := range relatedUsers {
+		userIDs = append(userIDs, id)
+	}
+
+	return userIDs, nil
+}
+
+// GetUserRelationships retrieves all relationships for a user
+func (r *UserRepository) GetUserRelationships(userID string) ([]Relationship, error) {
+	if r.session == nil {
+		return nil, ErrDatabaseNotInitialized
+	}
+
+	var relationships []Relationship
+
+	// Query relationships where user is sender
+	senderIter := r.session.Query("SELECT id, sender_id, recipient_id, created_at FROM relationships_by_sender WHERE sender_id = ?", userID).Iter()
+
+	var id, senderID, recipientID string
+	var createdAt time.Time
+
+	for senderIter.Scan(&id, &senderID, &recipientID, &createdAt) {
+		relationships = append(relationships, Relationship{
+			ID:          id,
+			SenderID:    senderID,
+			RecipientID: recipientID,
+			CreatedAt:   createdAt,
+		})
+	}
+
+	if err := senderIter.Close(); err != nil {
+		return nil, err
+	}
+
+	// Query relationships where user is recipient
+	recipientIter := r.session.Query("SELECT id, sender_id, recipient_id, created_at FROM relationships_by_recipient WHERE recipient_id = ?", userID).Iter()
+
+	for recipientIter.Scan(&id, &senderID, &recipientID, &createdAt) {
+		relationships = append(relationships, Relationship{
+			ID:          id,
+			SenderID:    senderID,
+			RecipientID: recipientID,
+			CreatedAt:   createdAt,
+		})
+	}
+
+	if err := recipientIter.Close(); err != nil {
+		return nil, err
+	}
+
+	return relationships, nil
+}
+
+// GetUsersDetails retrieves details for multiple users
+func (r *UserRepository) GetUsersDetails(userIDs []string) (map[string]UserDetails, error) {
+	if r.session == nil {
+		return nil, ErrDatabaseNotInitialized
+	}
+
+	userDetails := make(map[string]UserDetails)
+	
+	// Using a map to deduplicate user IDs
+	uniqueIDs := make(map[string]bool)
+	for _, id := range userIDs {
+		uniqueIDs[id] = true
+	}
+
+	for userID := range uniqueIDs {
+		details, err := r.GetUserDetails(userID)
+		if err != nil {
+			if err != ErrUserNotFound {
+				log.Printf("Error fetching details for user %s: %v", userID, err)
+			}
+			continue
+		}
+		userDetails[userID] = details
+	}
+
+	return userDetails, nil
 }

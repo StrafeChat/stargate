@@ -2,7 +2,6 @@ package format
 
 import (
 	"encoding/json"
-	"errors"
 
 	"github.com/vmihailenco/msgpack/v5"
 )
@@ -39,6 +38,11 @@ func (e *MsgPackEncoder) Decode(data []byte, v interface{}) error {
 	return msgpack.Unmarshal(data, v)
 }
 
+type Message struct {
+	Type    string          `json:"type" msgpack:"type"`
+	Content json.RawMessage `json:"content" msgpack:"content"`
+}
+
 func GetEncoder(format string) (Encoder, error) {
 	switch Format(format) {
 	case FormatJSON:
@@ -46,6 +50,6 @@ func GetEncoder(format string) (Encoder, error) {
 	case FormatMsgPack:
 		return &MsgPackEncoder{}, nil
 	default:
-		return nil, errors.New("unsupported format")
+		return &JSONEncoder{}, nil // Default to JSON
 	}
 }

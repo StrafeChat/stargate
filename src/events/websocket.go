@@ -3,6 +3,7 @@ package events
 import (
 	"fmt"
 	"log"
+	"net/http"
 	"time"
 
 	"github.com/StrafeChat/stargate/src/database"
@@ -19,24 +20,99 @@ type WebSocketHandler struct {
 	notificationSvc  *services.NotificationService
 	userID           string
 	sessionToken     string
+	format           format.Format
 }
 
-func NewWebSocketHandler(conn *websocket.Conn, encoder format.Encoder, notificationSvc *services.NotificationService) *WebSocketHandler {
+// WebSocket Event Types
+const (
+	EventDispatch           = "DISPATCH"
+	EventHeartbeat         = "HEARTBEAT"
+	EventIdentify          = "IDENTIFY"
+	EventReady            = "READY"
+	EventHeartbeatAck     = "HEARTBEAT_ACK"
+	EventMessage          = "MESSAGE"
+	EventRelationshipCreate = "RELATIONSHIP_CREATE"
+	EventRelationshipAccept = "RELATIONSHIP_ACCEPT"
+	EventRelationshipDelete = "RELATIONSHIP_DELETE"
+)
+
+// Standardized event payload structure
+type EventPayload struct {
+	Op string      `json:"op"`
+	D  interface{} `json:"d"`
+}
+
+func NewWebSocketHandler(conn *websocket.Conn, r *http.Request) *WebSocketHandler {
+	// Default to MessagePack
+	selectedFormat := format.FormatMsgPack
+	
+	// Explicitly check query parameter
+	formatParam := r.URL.Query().Get("format")
+	log.Printf("Received WebSocket connection with format parameter: %q", formatParam)
+	
+	// Determine format based on query parameter
+	switch formatParam {
+	case "json":
+		selectedFormat = format.FormatJSON
+	case "msgpack", "":
+		selectedFormat = format.FormatMsgPack
+	default:
+		log.Printf("Unknown format parameter: %q, defaulting to MessagePack", formatParam)
+	}
+
+	encoder, err := format.GetEncoder(string(selectedFormat))
+	if err != nil {
+		log.Printf("Error getting encoder for %s: %v, falling back to MessagePack", selectedFormat, err)
+		encoder, _ = format.GetEncoder(string(format.FormatMsgPack))
+		selectedFormat = format.FormatMsgPack
+	}
+
+	log.Printf("Initializing WebSocket handler with format: %s", selectedFormat)
+
 	return &WebSocketHandler{
 		conn:             conn,
 		encoder:         encoder,
-		notificationSvc: notificationSvc,
 		userRepo:        repository.NewUserRepository(database.GetSession()),
+		notificationSvc: services.NewNotificationService(nil),
+		format:          selectedFormat,
 	}
 }
 
 func (h *WebSocketHandler) HandlePayload(messageType int, payload []byte) error {
+	log.Printf("Received payload: messageType=%d, length=%d, hex=%x", messageType, len(payload), payload)
 	
+	// Try decoding with multiple formats
 	var base BasePayload
-	if err := h.encoder.Decode(payload, &base); err != nil {
-		log.Printf("Error decoding base payload: %v", err)
-		return err
+	var err error
+	var successfulFormat string
+
+	// List of encoders to try
+	encoders := []struct{
+		name string
+		encoder format.Encoder
+	}{
+		{"Primary", h.encoder},
+		{"JSON", &format.JSONEncoder{}},
+		{"MessagePack", &format.MsgPackEncoder{}},
 	}
+
+	for _, enc := range encoders {
+		err = enc.encoder.Decode(payload, &base)
+		if err == nil {
+			successfulFormat = enc.name
+			break
+		} else {
+			log.Printf("Decoding with %s failed: %v", enc.name, err)
+		}
+	}
+
+	// If still can't decode, log detailed error
+	if err != nil {
+		log.Printf("Failed to decode payload in any format. Raw payload (hex): %x", payload)
+		return fmt.Errorf("failed to decode payload: %v", err)
+	}
+
+	log.Printf("Successfully decoded payload with %s format. Payload type: %s", successfulFormat, base.Type)
 
 	switch base.Type {
 	case PayloadTypeIdentify:
@@ -51,57 +127,131 @@ func (h *WebSocketHandler) HandlePayload(messageType int, payload []byte) error 
 			return fmt.Errorf("not authenticated")
 		}
 		return h.handleMessage(payload)
-	case PayloadTypePing:
-		return h.handlePing()
 	default:
 		return fmt.Errorf("unknown payload type: %s", base.Type)
 	}
 }
 
 func (h *WebSocketHandler) handleIdentify(payload []byte) error {
-	var identify IdentifyPayload
-	if err := h.encoder.Decode(payload, &identify); err != nil {
+	var identifyPayload IdentifyPayload
+	var err error
+
+	// Try multiple encoders
+	encoders := []struct{
+		name string
+		encoder format.Encoder
+	}{
+		{"Primary", h.encoder},
+		{"JSON", &format.JSONEncoder{}},
+		{"MessagePack", &format.MsgPackEncoder{}},
+	}
+
+	for _, enc := range encoders {
+		err = enc.encoder.Decode(payload, &identifyPayload)
+		if err == nil {
+			log.Printf("Successfully decoded identify payload with %s", enc.name)
+			break
+		} else {
+			log.Printf("Decoding identify payload with %s failed: %v", enc.name, err)
+		}
+	}
+
+	if err != nil {
+		log.Printf("Failed to decode identify payload. Raw payload (hex): %x", payload)
 		return fmt.Errorf("failed to decode identify payload: %v", err)
 	}
 
-	userID, err := h.userRepo.ValidateSessionToken(identify.Token)
+	// Validate session token
+	userID, err := h.userRepo.ValidateSessionToken(identifyPayload.Token)
 	if err != nil {
-		return fmt.Errorf("invalid token: %v", err)
+		return fmt.Errorf("authentication failed: %v", err)
 	}
 
 	h.userID = userID
-	h.sessionToken = identify.Token
+	h.sessionToken = identifyPayload.Token
 
+	// Add connection to ConnectionManager
+	log.Printf("Adding WebSocket connection for user %s", userID)
+	Manager.AddConnection(userID, h)
+
+	// Optional: set user online
 	if err := h.userRepo.SetUserOnline(userID); err != nil {
 		log.Printf("Failed to set user online: %v", err)
 	}
 
-	Manager.AddConnection(userID, h)
-
+	// Get user details
 	details, err := h.userRepo.GetUserDetails(userID)
 	if err != nil {
 		log.Printf("Failed to get user details: %v", err)
 		details = repository.UserDetails{ID: userID}
 	}
 
-	ready := ReadyPayload{
-		BasePayload: BasePayload{Type: PayloadTypeReady},
-		UserID:      details.ID,
-		Username:    details.Username,
+	// Get related user IDs
+	relatedUserIDs, err := h.userRepo.GetRelatedUserIDs(userID)
+	if err != nil {
+		log.Printf("Failed to get related user IDs: %v", err)
+		relatedUserIDs = []string{}
 	}
 
-	return h.sendResponse(ready)
+	// Get details for all related users
+	relatedUsers, err := h.userRepo.GetUsersDetails(relatedUserIDs)
+	if err != nil {
+		log.Printf("Failed to get related users details: %v", err)
+		relatedUsers = make(map[string]repository.UserDetails)
+	}
+
+	// Create standardized ready payload
+	readyPayload := EventPayload{
+		Op: EventReady,
+		D: map[string]interface{}{
+			"client_user": details,
+			"users": relatedUsers,
+		},
+	}
+
+	return h.sendResponse(readyPayload)
 }
 
 func (h *WebSocketHandler) handleHeartbeat(payload []byte) error {
 	var heartbeat HeartbeatPayload
-	if err := h.encoder.Decode(payload, &heartbeat); err != nil {
+	var err error
+
+	// Try multiple encoders
+	encoders := []struct{
+		name string
+		encoder format.Encoder
+	}{
+		{"Primary", h.encoder},
+		{"JSON", &format.JSONEncoder{}},
+		{"MessagePack", &format.MsgPackEncoder{}},
+	}
+
+	for _, enc := range encoders {
+		err = enc.encoder.Decode(payload, &heartbeat)
+		if err == nil {
+			log.Printf("Successfully decoded heartbeat payload with %s", enc.name)
+			break
+		} else {
+			log.Printf("Decoding heartbeat payload with %s failed: %v", enc.name, err)
+		}
+	}
+
+	if err != nil {
+		log.Printf("Failed to decode heartbeat payload. Raw payload (hex): %x", payload)
 		return fmt.Errorf("failed to decode heartbeat payload: %v", err)
 	}
 
-	return h.sendResponse(HeartbeatAckPayload{
-		BasePayload: BasePayload{Type: PayloadTypeHeartbeatAck},
-		Timestamp:   time.Now().UnixMilli(),
+	// Ensure user is authenticated before processing heartbeat
+	if h.userID == "" {
+		return fmt.Errorf("not authenticated")
+	}
+
+	log.Printf("Received heartbeat from %s: %d", h.userID, heartbeat.Timestamp)
+	return h.sendResponse(EventPayload{
+		Op: EventHeartbeatAck,
+		D:  map[string]interface{}{
+			"timestamp": time.Now().UnixMilli(),
+		},
 	})
 }
 
@@ -114,22 +264,36 @@ func (h *WebSocketHandler) handleMessage(payload []byte) error {
 	log.Printf("Received message from %s in channel %s: %s", 
 		h.userID, message.ChannelID, message.Content)
 
-	return nil
-}
-
-func (h *WebSocketHandler) handlePing() error {
-	return h.sendResponse(PongPayload{
-		BasePayload: BasePayload{Type: PayloadTypePong},
+	return h.sendResponse(EventPayload{
+		Op: EventMessage,
+		D:  message,
 	})
 }
 
 func (h *WebSocketHandler) sendResponse(response interface{}) error {
-	data, err := h.encoder.Encode(response)
+	// If the response is not already an EventPayload, wrap it
+	var payload EventPayload
+	switch v := response.(type) {
+	case EventPayload:
+		payload = v
+	default:
+		payload = EventPayload{
+			Op: EventDispatch,
+			D:  v,
+		}
+	}
+
+	data, err := h.encoder.Encode(payload)
 	if err != nil {
 		return fmt.Errorf("failed to encode response: %v", err)
 	}
 
-	if err := h.conn.WriteMessage(websocket.BinaryMessage, data); err != nil {
+	messageType := websocket.BinaryMessage
+	if h.format == format.FormatJSON {
+		messageType = websocket.TextMessage
+	}
+
+	if err := h.conn.WriteMessage(messageType, data); err != nil {
 		return fmt.Errorf("failed to write response: %v", err)
 	}
 
@@ -137,16 +301,22 @@ func (h *WebSocketHandler) sendResponse(response interface{}) error {
 }
 
 func (h *WebSocketHandler) Close() {
-	if h.userID != "" && h.sessionToken != "" {
-		if !Manager.HasOtherConnections(h.userID, h) {
-			if err := h.userRepo.SetUserOffline(h.userID, h.sessionToken); err != nil {
-				log.Printf("Failed to set user offline: %v", err)
-			}
-		}
+	log.Printf("Closing WebSocket connection for user %s", h.userID)
+	
+	// Remove connection from ConnectionManager
+	if h.userID != "" {
 		Manager.RemoveConnection(h.userID, h)
 	}
 
+	// Close the underlying WebSocket connection
 	if h.conn != nil {
 		h.conn.Close()
+	}
+
+	// Optional: set user offline if no other connections exist
+	if h.userID != "" && !Manager.HasOtherConnections(h.userID, h) {
+		if err := h.userRepo.SetUserOffline(h.userID, h.sessionToken); err != nil {
+			log.Printf("Failed to set user offline: %v", err)
+		}
 	}
 }
