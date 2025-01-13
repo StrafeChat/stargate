@@ -2,6 +2,7 @@ package repository
 
 import (
 	"errors"
+	"fmt"
 	"log"
 	"time"
 
@@ -10,9 +11,9 @@ import (
 
 var (
 	ErrDatabaseNotInitialized = errors.New("database connection not initialized")
-	ErrUserNotFound          = errors.New("user not found")
-	ErrTokenNotFound         = errors.New("token not found")
-	ErrTokenExpired          = errors.New("token expired")
+	ErrUserNotFound           = errors.New("user not found")
+	ErrTokenNotFound          = errors.New("token not found")
+	ErrTokenExpired           = errors.New("token expired")
 )
 
 type Presence struct {
@@ -22,23 +23,22 @@ type Presence struct {
 }
 
 type UserPresence struct {
-	Online       bool   `json:"online"`
 	Status       string `json:"status"`
 	CustomStatus string `json:"custom_status"`
 }
 
 type UserDetails struct {
-	ID           string       `json:"id"`
-	Username     string       `json:"username"`
-	Discriminator int         `json:"discriminator"`
-	Email        string       `json:"email"`
-	DisplayName  string       `json:"display_name"`
-	Avatar       string       `json:"avatar"`
-	Banner       string       `json:"banner"`
-	Bot          bool         `json:"bot"`
-	System       bool         `json:"system"`
-	Flags        int          `json:"flags"`
-	Presence     UserPresence `json:"presence"`
+	ID            string       `json:"id"`
+	Username      string       `json:"username"`
+	Discriminator int          `json:"discriminator"`
+	Email         string       `json:"email"`
+	DisplayName   string       `json:"display_name"`
+	Avatar        string       `json:"avatar"`
+	Banner        string       `json:"banner"`
+	Bot           bool         `json:"bot"`
+	System        bool         `json:"system"`
+	Flags         int          `json:"flags"`
+	Presence      UserPresence `json:"presence"`
 }
 
 type UserRepository struct {
@@ -59,7 +59,7 @@ func (r *UserRepository) ValidateSessionToken(token string) (string, error) {
 	var userID string
 	var expiresAt int64
 	query := r.session.Query("SELECT user_id, expires_at FROM sessions WHERE session_token = ?", token)
-	
+
 	if err := query.Scan(&userID, &expiresAt); err != nil {
 		if err == gocql.ErrNotFound {
 			log.Printf("Token not found: %s", token)
@@ -92,13 +92,17 @@ func (r *UserRepository) GetUserDetails(userID string) (UserDetails, error) {
 	var bot bool
 	var system bool
 	var flags int
-	if err := r.session.Query("SELECT id, username, discriminator, email, display_name, avatar, banner, bot, system, flags, presence FROM users WHERE id = ?", 
+	if err := r.session.Query("SELECT id, username, discriminator, email, display_name, avatar, banner, bot, system, flags, presence FROM users WHERE id = ?",
 		userID).Scan(&details.ID, &details.Username, &details.Discriminator, &email, &displayName, &avatar, &banner, &bot, &system, &flags, &presence); err != nil {
 		log.Printf("Error fetching user details: %v", err)
 		if err == gocql.ErrNotFound {
 			return UserDetails{}, ErrUserNotFound
 		}
 		return UserDetails{}, err
+	}
+	status := "offline"
+	if presence.Online {
+		status = presence.Status
 	}
 
 	details.Email = email
@@ -109,8 +113,7 @@ func (r *UserRepository) GetUserDetails(userID string) (UserDetails, error) {
 	details.System = system
 	details.Flags = flags
 	details.Presence = UserPresence{
-		Online:       presence.Online,
-		Status:       presence.Status,
+		Status:       status,
 		CustomStatus: presence.CustomStatus,
 	}
 
@@ -148,7 +151,7 @@ func (r *UserRepository) SetUserOffline(userID string, sessionToken string) erro
 		log.Printf("Error getting current presence: %v", err)
 		presence = Presence{
 			Online:       false,
-			Status:       "offline",
+			Status:       "online",
 			CustomStatus: "",
 		}
 	}
@@ -206,7 +209,7 @@ func (r *UserRepository) GetRelatedUserIDs(userID string) ([]string, error) {
 	for id := range relatedUsers {
 		userIDs = append(userIDs, id)
 	}
-
+	fmt.Println(userIDs)
 	return userIDs, nil
 }
 
@@ -263,7 +266,7 @@ func (r *UserRepository) GetUsersDetails(userIDs []string) (map[string]UserDetai
 	}
 
 	userDetails := make(map[string]UserDetails)
-	
+
 	// Using a map to deduplicate user IDs
 	uniqueIDs := make(map[string]bool)
 	for _, id := range userIDs {
