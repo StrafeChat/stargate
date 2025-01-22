@@ -8,8 +8,7 @@ const (
 	PayloadTypeHeartbeatAck PayloadType = "HEARTBEAT_ACK"
 	PayloadTypeMessage    PayloadType = "MESSAGE"
 	PayloadTypeReady      PayloadType = "READY"
-	PayloadTypePing       PayloadType = "PING"
-	PayloadTypePong       PayloadType = "PONG"
+	PayloadTypePresenceUpdate PayloadType = "PRESENCE_UPDATE"
 )
 
 type BasePayload struct {
@@ -36,6 +35,13 @@ type MessagePayload struct {
 type HeartbeatAckPayload struct {
 	BasePayload
 	Timestamp int64 `json:"timestamp" msgpack:"timestamp"`
+}
+
+type PresenceUpdatePayload struct {
+	BasePayload
+	UserID       string `json:"user_id" msgpack:"user_id"`
+	Status       string `json:"status" msgpack:"status"`
+	CustomStatus string `json:"custom_status" msgpack:"custom_status"`
 }
 
 type PingPayload struct {

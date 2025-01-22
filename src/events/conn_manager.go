@@ -1,7 +1,11 @@
 package events
 
 import (
+	"fmt"
+	"log"
 	"sync"
+
+	"github.com/StrafeChat/stargate/src/repository"
 )
 
 type ConnectionManager struct {
@@ -49,4 +53,42 @@ func (m *ConnectionManager) HasOtherConnections(userID string, handler *WebSocke
 		return count > 0
 	}
 	return false
+}
+
+func (m *ConnectionManager) BroadcastPresenceUpdate(userID string, status string, customStatus string, userRepo *repository.UserRepository) error {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	// Get all related users
+	relatedUsers, err := userRepo.GetRelatedUserIDs(userID)
+	if err != nil {
+		return fmt.Errorf("failed to get related users: %v", err)
+	}
+
+   log.Printf("Broadcasting presence update to %d related users", len(relatedUsers))
+
+	// Create presence update payload
+	payload := PresenceUpdatePayload{
+		BasePayload: BasePayload{
+			Type: PayloadTypePresenceUpdate,
+		},
+		UserID:       userID,
+		Status:       status,
+		CustomStatus: customStatus,
+	}
+
+	// Broadcast to all related users
+	for _, relatedUserID := range relatedUsers {
+		if handlers, exists := m.connections[relatedUserID]; exists {
+			for handler := range handlers {
+				fmt.Printf("Broadcasting presence update to user %s\n", relatedUserID)
+				if err := handler.sendResponse(payload); err != nil {
+					// Log error but continue broadcasting to others
+					log.Printf("Failed to send presence update to user %s: %v", relatedUserID, err)
+				}
+			}
+		}
+	}
+
+	return nil
 }

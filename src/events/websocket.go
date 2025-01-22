@@ -186,6 +186,29 @@ func (h *WebSocketHandler) handleIdentify(payload []byte) error {
 		details = repository.UserDetails{ID: userID}
 	}
 
+	// If user's status is not offline, broadcast presence update
+	// if details.Presence.Status != "offline" {
+		log.Printf("Broadcasting presence update for user %s", userID)
+		if err := Manager.BroadcastPresenceUpdate(userID, details.Presence.Status, details.Presence.CustomStatus, h.userRepo); err != nil {
+			log.Printf("Failed to broadcast presence update: %v", err)
+		}
+	// }
+
+	// Get user relationships and requests
+	relationships, err := h.userRepo.GetUserRelationships(userID)
+	if err != nil {
+		log.Printf("Failed to get user relationships: %v", err)
+		relationships = []string{}
+	}
+	log.Printf("[WebSocket:READY] Got relationships for user %s: %v", userID, relationships)
+
+	relationshipRequests, err := h.userRepo.GetUserRelationshipRequests(userID)
+	if err != nil {
+		log.Printf("Failed to get user relationship requests: %v", err)
+		relationshipRequests = []repository.Relationship{}
+	}
+	log.Printf("[WebSocket:READY] Got relationship requests for user %s: %+v", userID, relationshipRequests)
+
 	// Get related user IDs
 	relatedUserIDs, err := h.userRepo.GetRelatedUserIDs(userID)
 	if err != nil {
@@ -193,8 +216,23 @@ func (h *WebSocketHandler) handleIdentify(payload []byte) error {
 		relatedUserIDs = []string{}
 	}
 
-	// Get details for all related users
-	relatedUsers, err := h.userRepo.GetUsersDetails(relatedUserIDs)
+	// Add friend IDs to the list of users to fetch if not already included
+	userIDsToFetch := make(map[string]bool)
+	for _, id := range relatedUserIDs {
+		userIDsToFetch[id] = true
+	}
+	for _, id := range relationships {
+		userIDsToFetch[id] = true
+	}
+
+	// Convert map keys back to slice
+	uniqueUserIDs := make([]string, 0, len(userIDsToFetch))
+	for id := range userIDsToFetch {
+		uniqueUserIDs = append(uniqueUserIDs, id)
+	}
+
+	// Get details for all related users and friends
+	relatedUsers, err := h.userRepo.GetUsersDetails(uniqueUserIDs)
 	if err != nil {
 		log.Printf("Failed to get related users details: %v", err)
 		relatedUsers = make(map[string]repository.UserDetails)
@@ -204,8 +242,10 @@ func (h *WebSocketHandler) handleIdentify(payload []byte) error {
 	readyPayload := EventPayload{
 		Op: EventReady,
 		D: map[string]interface{}{
-			"client_user": details,
-			"users": relatedUsers,
+			"client_user":   details,
+			"users":         relatedUsers,
+			"relationships": relationships,
+			"relationship_requests": relationshipRequests,
 		},
 	}
 
@@ -306,17 +346,37 @@ func (h *WebSocketHandler) Close() {
 	// Remove connection from ConnectionManager
 	if h.userID != "" {
 		Manager.RemoveConnection(h.userID, h)
+
+		// Only proceed with offline status if this was the last connection
+		if !Manager.HasOtherConnections(h.userID, h) {
+			// Get current user details to check their status
+			details, err := h.userRepo.GetUserDetails(h.userID)
+			if err != nil {
+				log.Printf("Failed to get user details during close: %v", err)
+				return
+			}
+
+			// Only send presence update if they weren't already showing as offline
+			if details.Presence.Status != "offline" {
+				log.Printf("Last connection closed for user %s, broadcasting offline status", h.userID)
+				if err := Manager.BroadcastPresenceUpdate(h.userID, "offline", details.Presence.CustomStatus, h.userRepo); err != nil {
+					log.Printf("Failed to broadcast offline presence update: %v", err)
+				}
+				
+				// Update the user's status in the database
+				if err := h.userRepo.SetUserOffline(h.userID, h.sessionToken); err != nil {
+					log.Printf("Failed to set user offline: %v", err)
+				}
+			} else {
+				log.Printf("User %s was already showing as offline, skipping presence update", h.userID)
+			}
+		} else {
+			log.Printf("User %s has other active connections, not updating presence", h.userID)
+		}
 	}
 
 	// Close the underlying WebSocket connection
 	if h.conn != nil {
 		h.conn.Close()
-	}
-
-	// Optional: set user offline if no other connections exist
-	if h.userID != "" && !Manager.HasOtherConnections(h.userID, h) {
-		if err := h.userRepo.SetUserOffline(h.userID, h.sessionToken); err != nil {
-			log.Printf("Failed to set user offline: %v", err)
-		}
 	}
 }

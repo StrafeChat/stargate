@@ -11,15 +11,6 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-// EventType represents different types of events that can be broadcast
-type EventType string
-
-const (
-	RelationshipEventCreate EventType = "RELATIONSHIP_CREATE"
-	RelationshipEventAccept EventType = "RELATIONSHIP_ACCEPT"
-	RelationshipEventDelete EventType = "RELATIONSHIP_DELETE"
-)
-
 // Event represents a generic event structure for broadcasting
 type Event struct {
 	Type        string `json:"type"`
@@ -103,9 +94,9 @@ func (h *EventHandler) Broadcast(userID string, eventData []byte) {
 			continue
 		}
 
-		// Determine message type based on handler's format
+		// Determine message type based on encoder type
 		messageType := websocket.BinaryMessage
-		if handler.format == format.FormatJSON {
+		if _, isJSON := handler.encoder.(*format.JSONEncoder); isJSON {
 			messageType = websocket.TextMessage
 		}
 
@@ -157,12 +148,12 @@ func (h *EventHandler) StartEventListener() {
 			event.Type, event.SenderID, event.CreatedAt)
 
 		var opCode string
-		switch EventType(event.Type) {
-		case RelationshipEventCreate:
+		switch event.Type {
+		case "RELATIONSHIP_CREATE":
 			opCode = EventRelationshipCreate
-		case RelationshipEventAccept:
+		case "RELATIONSHIP_ACCEPT":
 			opCode = EventRelationshipAccept
-		case RelationshipEventDelete:
+		case "RELATIONSHIP_DELETE":
 			opCode = EventRelationshipDelete
 		default:
 			opCode = EventDispatch
@@ -184,7 +175,7 @@ func (h *EventHandler) StartEventListener() {
 				SenderID:    event.SenderID,
 				RecipientId: event.RecipientId,
 				CreatedAt:   event.CreatedAt,
-				Type:        strings.ToLower(strings.Replace(string(event.Type), "RELATIONSHIP_", "relationship", 1)),
+				Type:        strings.ToLower(strings.Replace(event.Type, "RELATIONSHIP_", "relationship", 1)),
 			},
 		}
 
@@ -194,21 +185,21 @@ func (h *EventHandler) StartEventListener() {
 			continue
 		}
 
-		switch EventType(event.Type) {
-		case RelationshipEventCreate:
+		switch event.Type {
+		case "RELATIONSHIP_CREATE":
 			log.Printf("Broadcasting Relationship Create Event: Sender=%s, Recipient=%s", 
 				event.SenderID, event.RecipientId)
 			
 			h.Broadcast(event.RecipientId, wsPayloadBytes)
 			h.Broadcast(event.SenderID, wsPayloadBytes)
 
-		case RelationshipEventAccept:
+		case "RELATIONSHIP_ACCEPT":
 			log.Printf("Broadcasting Relationship Accept Event: Sender=%s", event.SenderID)
 			
 			h.Broadcast(event.SenderID, wsPayloadBytes)
 			h.Broadcast(event.RecipientId, wsPayloadBytes)
 
-		case RelationshipEventDelete:
+		case "RELATIONSHIP_DELETE":
 			log.Printf("Broadcasting Relationship Delete Event: Sender=%s", event.SenderID)
 			
 			h.Broadcast(event.SenderID, wsPayloadBytes)

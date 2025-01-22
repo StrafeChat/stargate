@@ -31,7 +31,6 @@ type UserDetails struct {
 	ID            string       `json:"id"`
 	Username      string       `json:"username"`
 	Discriminator int          `json:"discriminator"`
-	Email         string       `json:"email"`
 	DisplayName   string       `json:"display_name"`
 	Avatar        string       `json:"avatar"`
 	Banner        string       `json:"banner"`
@@ -85,15 +84,14 @@ func (r *UserRepository) GetUserDetails(userID string) (UserDetails, error) {
 
 	var details UserDetails
 	var presence Presence
-	var email string
 	var displayName string
 	var avatar string
 	var banner string
 	var bot bool
 	var system bool
 	var flags int
-	if err := r.session.Query("SELECT id, username, discriminator, email, display_name, avatar, banner, bot, system, flags, presence FROM users WHERE id = ?",
-		userID).Scan(&details.ID, &details.Username, &details.Discriminator, &email, &displayName, &avatar, &banner, &bot, &system, &flags, &presence); err != nil {
+	if err := r.session.Query("SELECT id, username, discriminator, display_name, avatar, banner, bot, system, flags, presence FROM users WHERE id = ?",
+		userID).Scan(&details.ID, &details.Username, &details.Discriminator, &displayName, &avatar, &banner, &bot, &system, &flags, &presence); err != nil {
 		log.Printf("Error fetching user details: %v", err)
 		if err == gocql.ErrNotFound {
 			return UserDetails{}, ErrUserNotFound
@@ -105,7 +103,6 @@ func (r *UserRepository) GetUserDetails(userID string) (UserDetails, error) {
 		status = presence.Status
 	}
 
-	details.Email = email
 	details.DisplayName = displayName
 	details.Avatar = avatar
 	details.Banner = banner
@@ -192,7 +189,7 @@ func (r *UserRepository) GetRelatedUserIDs(userID string) ([]string, error) {
 		relatedUsers[otherID] = true
 	}
 	if err := senderIter.Close(); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to get relationships where user is sender: %v", err)
 	}
 
 	// Get IDs where user is recipient (get sender_ids)
@@ -201,60 +198,87 @@ func (r *UserRepository) GetRelatedUserIDs(userID string) ([]string, error) {
 		relatedUsers[otherID] = true
 	}
 	if err := recipientIter.Close(); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to get relationships where user is recipient: %v", err)
+	}
+
+	// Get accepted friends from relationships array
+	relationships, err := r.GetUserRelationships(userID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get accepted relationships: %v", err)
+	}
+	for _, friendID := range relationships {
+		relatedUsers[friendID] = true
 	}
 
 	// Convert map keys to slice
-	userIDs := make([]string, 0, len(relatedUsers))
+	result := make([]string, 0, len(relatedUsers))
 	for id := range relatedUsers {
-		userIDs = append(userIDs, id)
+		result = append(result, id)
 	}
-	fmt.Println(userIDs)
-	return userIDs, nil
+
+	return result, nil
 }
 
-// GetUserRelationships retrieves all relationships for a user
-func (r *UserRepository) GetUserRelationships(userID string) ([]Relationship, error) {
+// GetUserRelationshipRequests retrieves all pending relationship requests for a user
+func (r *UserRepository) GetUserRelationshipRequests(userID string) ([]Relationship, error) {
 	if r.session == nil {
 		return nil, ErrDatabaseNotInitialized
 	}
 
+	log.Printf("[GetUserRelationshipRequests] Getting requests for user: %s", userID)
+
 	var relationships []Relationship
 
-	// Query relationships where user is sender
-	senderIter := r.session.Query("SELECT id, sender_id, recipient_id, created_at FROM relationships_by_sender WHERE sender_id = ?", userID).Iter()
+	// Get incoming requests (where user is recipient)
+	query := "SELECT id, sender_id, recipient_id FROM relationships_by_recipient WHERE recipient_id = ?"
+	log.Printf("[GetUserRelationshipRequests] Executing recipient query: %s with userID: %s", query, userID)
+	
+	recipientIter := r.session.Query(query, userID).Iter()
 
 	var id, senderID, recipientID string
-	var createdAt time.Time
 
-	for senderIter.Scan(&id, &senderID, &recipientID, &createdAt) {
+	for recipientIter.Scan(&id, &senderID, &recipientID) {
+		log.Printf("[GetUserRelationshipRequests] Found incoming request: id=%s, sender=%s, recipient=%s", 
+			id, senderID, recipientID)
+		
 		relationships = append(relationships, Relationship{
 			ID:          id,
 			SenderID:    senderID,
 			RecipientID: recipientID,
-			CreatedAt:   createdAt,
-		})
-	}
-
-	if err := senderIter.Close(); err != nil {
-		return nil, err
-	}
-
-	// Query relationships where user is recipient
-	recipientIter := r.session.Query("SELECT id, sender_id, recipient_id, created_at FROM relationships_by_recipient WHERE recipient_id = ?", userID).Iter()
-
-	for recipientIter.Scan(&id, &senderID, &recipientID, &createdAt) {
-		relationships = append(relationships, Relationship{
-			ID:          id,
-			SenderID:    senderID,
-			RecipientID: recipientID,
-			CreatedAt:   createdAt,
+			CreatedAt:   time.Now(), // Default to current time since we don't have created_at in this table
 		})
 	}
 
 	if err := recipientIter.Close(); err != nil {
+		log.Printf("[GetUserRelationshipRequests] Error closing recipient iterator: %v", err)
 		return nil, err
 	}
+
+	// Get outgoing requests (where user is sender)
+	senderQuery := "SELECT id, sender_id, recipient_id FROM relationships_by_sender WHERE sender_id = ?"
+	log.Printf("[GetUserRelationshipRequests] Executing sender query: %s with userID: %s", senderQuery, userID)
+	
+	senderIter := r.session.Query(senderQuery, userID).Iter()
+
+	for senderIter.Scan(&id, &senderID, &recipientID) {
+		log.Printf("[GetUserRelationshipRequests] Found outgoing request: id=%s, sender=%s, recipient=%s", 
+			id, senderID, recipientID)
+		
+		relationships = append(relationships, Relationship{
+			ID:          id,
+			SenderID:    senderID,
+			RecipientID: recipientID,
+			CreatedAt:   time.Now(), // Default to current time since we don't have created_at in this table
+		})
+	}
+
+	if err := senderIter.Close(); err != nil {
+		log.Printf("[GetUserRelationshipRequests] Error closing sender iterator: %v", err)
+		return nil, err
+	}
+
+	log.Printf("[GetUserRelationshipRequests] Found %d total requests for user %s", len(relationships), userID)
+	log.Printf("[GetUserRelationshipRequests] Returning relationships: %+v", relationships)
 
 	return relationships, nil
 }
@@ -285,4 +309,42 @@ func (r *UserRepository) GetUsersDetails(userIDs []string) (map[string]UserDetai
 	}
 
 	return userDetails, nil
+}
+
+// GetUserRelationships retrieves all accepted relationships for a user from their relationships array
+func (r *UserRepository) GetUserRelationships(userID string) ([]string, error) {
+	if r.session == nil {
+		return nil, ErrDatabaseNotInitialized
+	}
+
+	var relationships []string
+	if err := r.session.Query("SELECT relationships FROM users WHERE id = ?", userID).Scan(&relationships); err != nil {
+		return nil, fmt.Errorf("failed to get user relationships: %v", err)
+	}
+
+	return relationships, nil
+}
+
+// SetUserPresence updates a user's presence status and custom status
+func (r *UserRepository) SetUserPresence(userID string, status string, customStatus string) error {
+	if r.session == nil {
+		return ErrDatabaseNotInitialized
+	}
+
+	query := r.session.Query(`
+		UPDATE users 
+		SET presence = {
+			online: true,
+			status: ?,
+			custom_status: ?
+		}
+		WHERE id = ?`,
+		status, customStatus, userID)
+
+	if err := query.Exec(); err != nil {
+		log.Printf("Error updating user presence: %v", err)
+		return fmt.Errorf("failed to update user presence: %v", err)
+	}
+
+	return nil
 }
