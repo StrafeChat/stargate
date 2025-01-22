@@ -52,7 +52,7 @@ func InitDB() error {
 		return fmt.Errorf("failed to create keyspace: %v", err)
 	}
 
-	redisAddr := getEnv("REDIS_ADDR", "localhost:6379")
+	redisAddr := getEnv("REDIS_ADDR", os.Getenv("REDIS_HOST"))
 	redisPassword := os.Getenv("REDIS_PASSWORD")
 
 	Rdb = redis.NewClient(&redis.Options{
