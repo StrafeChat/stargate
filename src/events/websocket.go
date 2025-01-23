@@ -21,6 +21,7 @@ type WebSocketHandler struct {
 	userID           string
 	sessionToken     string
 	format           format.Format
+	connectionID     string // Unique ID for this connection instance
 }
 
 // WebSocket Event Types
@@ -43,6 +44,9 @@ type EventPayload struct {
 }
 
 func NewWebSocketHandler(conn *websocket.Conn, r *http.Request) *WebSocketHandler {
+	// Generate unique connection ID
+	connectionID := fmt.Sprintf("conn_%x", time.Now().UnixNano())
+
 	// Default to MessagePack
 	selectedFormat := format.FormatMsgPack
 	
@@ -75,6 +79,7 @@ func NewWebSocketHandler(conn *websocket.Conn, r *http.Request) *WebSocketHandle
 		userRepo:        repository.NewUserRepository(database.GetSession()),
 		notificationSvc: services.NewNotificationService(nil),
 		format:          selectedFormat,
+		connectionID:    connectionID,
 	}
 }
 
@@ -269,28 +274,29 @@ func (h *WebSocketHandler) handleHeartbeat(payload []byte) error {
 	for _, enc := range encoders {
 		err = enc.encoder.Decode(payload, &heartbeat)
 		if err == nil {
-			log.Printf("Successfully decoded heartbeat payload with %s", enc.name)
+			log.Printf("[%s] Successfully decoded heartbeat payload with %s", h.connectionID, enc.name)
 			break
 		} else {
-			log.Printf("Decoding heartbeat payload with %s failed: %v", enc.name, err)
+			log.Printf("[%s] Decoding heartbeat payload with %s failed: %v", h.connectionID, enc.name, err)
 		}
 	}
 
 	if err != nil {
-		log.Printf("Failed to decode heartbeat payload. Raw payload (hex): %x", payload)
-		return fmt.Errorf("failed to decode heartbeat payload: %v", err)
+		log.Printf("[%s] Failed to decode heartbeat payload. Raw payload (hex): %x", h.connectionID, payload)
+		return fmt.Errorf("failed to decode heartbeat payload for connection %s: %v", h.connectionID, err)
 	}
 
 	// Ensure user is authenticated before processing heartbeat
 	if h.userID == "" {
-		return fmt.Errorf("not authenticated")
+		return fmt.Errorf("connection %s not authenticated", h.connectionID)
 	}
 
-	log.Printf("Received heartbeat from %s: %d", h.userID, heartbeat.Timestamp)
+	log.Printf("[%s] Received heartbeat from user %s: %d", h.connectionID, h.userID, heartbeat.Timestamp)
 	return h.sendResponse(EventPayload{
 		Op: EventHeartbeatAck,
 		D:  map[string]interface{}{
 			"timestamp": time.Now().UnixMilli(),
+			"connection_id": h.connectionID,
 		},
 	})
 }
