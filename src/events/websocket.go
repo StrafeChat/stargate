@@ -35,6 +35,7 @@ const (
 	EventRelationshipCreate = "RELATIONSHIP_CREATE"
 	EventRelationshipAccept = "RELATIONSHIP_ACCEPT"
 	EventRelationshipDelete = "RELATIONSHIP_DELETE"
+	EventPresenceUpdate    = "PRESENCE_UPDATE"
 )
 
 // Standardized event payload structure
