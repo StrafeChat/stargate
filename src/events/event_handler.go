@@ -19,6 +19,7 @@ type Event struct {
 	SenderID    string `json:"sender_id"`
 	RecipientId string `json:"recipient_id"`
 	CreatedAt   int64  `json:"created_at"`
+	Data map[string]interface{} `json:"data"`
 }
 
 // EventHandler manages event broadcasting
@@ -78,8 +79,6 @@ func (h *EventHandler) Broadcast(userID string, eventData []byte) {
 		standardPayload["op"] = EventRelationshipAccept
 	case "RELATIONSHIP_DELETE":
 		standardPayload["op"] = EventRelationshipDelete
-	case "PRESENCE_UPDATE":
-		standardPayload["op"] = EventPresenceUpdate
 	case "MESSAGE":
 		standardPayload["op"] = EventMessage
 	}
@@ -121,7 +120,7 @@ func (h *EventHandler) Broadcast(userID string, eventData []byte) {
 func (h *EventHandler) StartEventListener() {
 	log.Println("Starting Redis pub/sub event listener")
 	
-	pubsub := database.Rdb.Subscribe("RELATIONSHIP_EVENTS", "USER_EVENTS", "PRESENCE_EVENTS", "MESSAGE_EVENTS")
+	pubsub := database.Rdb.Subscribe("RELATIONSHIP_EVENTS", "USER_EVENTS")
 	defer pubsub.Close()
 
 	ch := pubsub.Channel()
@@ -136,73 +135,78 @@ func (h *EventHandler) StartEventListener() {
 			continue
 		}
 
-		var event struct {
-			Type string                 `json:"type"`
-			Data map[string]interface{} `json:"data"`
-		}
+		var event Event
 		if err := json.Unmarshal(payload, &event); err != nil {
 			log.Printf("Error unmarshaling event (payload: %s): %v", string(payload), err)
 			continue
 		}
+		
 
 		if event.Type == "" {
 			log.Printf("Received event with empty type: %+v", event)
 			continue
 		}
 
-		log.Printf("Processed event: Type=%s", event.Type)
+		log.Printf("Processed event: Type=%s, SenderID=%s, CreatedAt=%d", 
+			event.Type, event.SenderID, event.CreatedAt)
+
+		var opCode string
+		switch event.Type {
+		case "RELATIONSHIP_CREATE":
+			opCode = EventRelationshipCreate
+		case "RELATIONSHIP_ACCEPT":
+			opCode = EventRelationshipAccept
+		case "RELATIONSHIP_DELETE":
+			opCode = EventRelationshipDelete
+		default:
+			opCode = EventDispatch
+		}
+
+		wsPayload := struct {
+			Op string      `json:"op"`
+			D  interface{} `json:"d"`
+		}{
+			Op: opCode,
+			D: struct {
+				ID          string `json:"id"`
+				SenderID    string `json:"sender_id"`
+				RecipientId string `json:"recipient_id"`
+				CreatedAt   int64  `json:"created_at"`
+				Type        string `json:"type"`
+			}{
+				ID:          event.ID,
+				SenderID:    event.SenderID,
+				RecipientId: event.RecipientId,
+				CreatedAt:   event.CreatedAt,
+				Type:        strings.ToLower(strings.Replace(event.Type, "RELATIONSHIP_", "relationship", 1)),
+			},
+		}
+
+		wsPayloadBytes, err := json.Marshal(wsPayload)
+		if err != nil {
+			log.Printf("Error marshaling WebSocket payload: %v", err)
+			continue
+		}
 
 		switch event.Type {
-		case "RELATIONSHIP_CREATE", "RELATIONSHIP_ACCEPT", "RELATIONSHIP_DELETE":
-			var relationshipEvent Event
-			if err := json.Unmarshal(payload, &relationshipEvent); err != nil {
-				log.Printf("Error unmarshaling relationship event: %v", err)
-				continue
-			}
+		case "RELATIONSHIP_CREATE":
+			log.Printf("Broadcasting Relationship Create Event: Sender=%s, Recipient=%s", 
+				event.SenderID, event.RecipientId)
+			
+			h.Broadcast(event.RecipientId, wsPayloadBytes)
+			h.Broadcast(event.SenderID, wsPayloadBytes)
 
-			wsPayload := struct {
-				Op string      `json:"op"`
-				D  interface{} `json:"d"`
-			}{
-				Op: EventDispatch,
-				D: struct {
-					ID          string `json:"id"`
-					SenderID    string `json:"sender_id"`
-					RecipientId string `json:"recipient_id"`
-					CreatedAt   int64  `json:"created_at"`
-					Type        string `json:"type"`
-				}{
-					ID:          relationshipEvent.ID,
-					SenderID:    relationshipEvent.SenderID,
-					RecipientId: relationshipEvent.RecipientId,
-					CreatedAt:   relationshipEvent.CreatedAt,
-					Type:        strings.ToLower(strings.Replace(relationshipEvent.Type, "RELATIONSHIP_", "relationship", 1)),
-				},
-			}
+		case "RELATIONSHIP_ACCEPT":
+			log.Printf("Broadcasting Relationship Accept Event: Sender=%s", event.SenderID)
+			
+			h.Broadcast(event.SenderID, wsPayloadBytes)
+			h.Broadcast(event.RecipientId, wsPayloadBytes)
 
-			wsPayloadBytes, err := json.Marshal(wsPayload)
-			if err != nil {
-				log.Printf("Error marshaling WebSocket payload: %v", err)
-				continue
-			}
-
-			switch event.Type {
-			case "RELATIONSHIP_CREATE":
-				log.Printf("Broadcasting Relationship Create Event: Sender=%s, Recipient=%s", 
-					relationshipEvent.SenderID, relationshipEvent.RecipientId)
-				h.Broadcast(relationshipEvent.RecipientId, wsPayloadBytes)
-				h.Broadcast(relationshipEvent.SenderID, wsPayloadBytes)
-
-			case "RELATIONSHIP_ACCEPT":
-				log.Printf("Broadcasting Relationship Accept Event: Sender=%s", relationshipEvent.SenderID)
-				h.Broadcast(relationshipEvent.SenderID, wsPayloadBytes)
-				h.Broadcast(relationshipEvent.RecipientId, wsPayloadBytes)
-
-			case "RELATIONSHIP_DELETE":
-				log.Printf("Broadcasting Relationship Delete Event: Sender=%s", relationshipEvent.SenderID)
-				h.Broadcast(relationshipEvent.SenderID, wsPayloadBytes)
-				h.Broadcast(relationshipEvent.RecipientId, wsPayloadBytes)
-			}
+		case "RELATIONSHIP_DELETE":
+			log.Printf("Broadcasting Relationship Delete Event: Sender=%s", event.SenderID)
+			
+			h.Broadcast(event.SenderID, wsPayloadBytes)
+			h.Broadcast(event.RecipientId, wsPayloadBytes)
 
 		case "PRESENCE_UPDATE":
 			if event.Data == nil {
@@ -238,6 +242,9 @@ func (h *EventHandler) StartEventListener() {
 			if err := Manager.BroadcastPresenceUpdate(userID, status, customStatus, userRepo); err != nil {
 				log.Printf("Error broadcasting presence update: %v", err)
 			}
+
+		default:
+			log.Printf("Unknown event type: %s", event.Type)
 		}
 	}
 
