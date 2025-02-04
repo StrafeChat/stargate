@@ -77,18 +77,26 @@ func (m *ConnectionManager) BroadcastPresenceUpdate(userID string, status string
 		CustomStatus: customStatus,
 	}
 
-	// Broadcast to all related users
-	for _, relatedUserID := range relatedUsers {
-		if handlers, exists := m.connections[relatedUserID]; exists {
-			for handler := range handlers {
-				fmt.Printf("Broadcasting presence update to user %s\n", relatedUserID)
-				if err := handler.sendResponse(payload); err != nil {
-					// Log error but continue broadcasting to others
-					log.Printf("Failed to send presence update to user %s: %v", relatedUserID, err)
-				}
-			}
-		}
-	}
+// First send to the current user's connections
+if handlers, exists := m.connections[userID]; exists {
+    for handler := range handlers {
+        if err := handler.sendResponse(payload); err != nil {
+            log.Printf("Failed to send presence update to user %s: %v", userID, err)
+        }
+    }
+}
+
+// Then send to related users' connections
+for _, relatedUserID := range relatedUsers {
+    if handlers, exists := m.connections[relatedUserID]; exists {
+        for handler := range handlers {
+            fmt.Printf("Broadcasting presence update to user %s\n", relatedUserID)
+            if err := handler.sendResponse(payload); err != nil {
+                log.Printf("Failed to send presence update to user %s: %v", relatedUserID, err)
+            }
+        }
+    }
+}
 
 	return nil
 }
