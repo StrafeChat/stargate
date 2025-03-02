@@ -59,13 +59,45 @@ func (m *ConnectionManager) BroadcastPresenceUpdate(userID string, status string
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	// Get all related users
+	// Get all related users (friends and relationships)
 	relatedUsers, err := userRepo.GetRelatedUserIDs(userID)
 	if err != nil {
 		return fmt.Errorf("failed to get related users: %v", err)
 	}
 
-   log.Printf("Broadcasting presence update to %d related users", len(relatedUsers))
+	// Get all rooms the user is in
+	rooms, err := userRepo.GetUserRooms(userID)
+	if err != nil {
+		log.Printf("Failed to get user rooms: %v", err)
+		// Continue with the users we have, don't fail completely
+	} else {
+		// Create a map to track unique user IDs
+		userIDsMap := make(map[string]bool)
+		for _, id := range relatedUsers {
+			userIDsMap[id] = true
+		}
+
+		// Add all recipients from group PMs
+		for _, room := range rooms {
+			// Type 1 is Group PM
+			if room.Type == 1 {
+				for _, recipientID := range room.Recipients {
+					// Don't add the user themselves
+					if recipientID != userID {
+						userIDsMap[recipientID] = true
+					}
+				}
+			}
+		}
+
+		// Convert map back to slice
+		relatedUsers = make([]string, 0, len(userIDsMap))
+		for id := range userIDsMap {
+			relatedUsers = append(relatedUsers, id)
+		}
+	}
+
+   log.Printf("Broadcasting presence update to %d users (including group members)", len(relatedUsers))
 
 	// Create presence update payload
 	payload := PresenceUpdatePayload{

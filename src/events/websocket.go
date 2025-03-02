@@ -14,28 +14,28 @@ import (
 )
 
 type WebSocketHandler struct {
-	conn              *websocket.Conn
-	encoder          format.Encoder
-	userRepo         *repository.UserRepository
-	notificationSvc  *services.NotificationService
-	userID           string
-	sessionToken     string
-	format           format.Format
-	connectionID     string // Unique ID for this connection instance
+	conn            *websocket.Conn
+	encoder         format.Encoder
+	userRepo        *repository.UserRepository
+	notificationSvc *services.NotificationService
+	userID          string
+	sessionToken    string
+	format          format.Format
+	connectionID    string // Unique ID for this connection instance
 }
 
 // WebSocket Event Types
 const (
 	EventDispatch           = "DISPATCH"
-	EventHeartbeat         = "HEARTBEAT"
-	EventIdentify          = "IDENTIFY"
-	EventReady            = "READY"
-	EventHeartbeatAck     = "HEARTBEAT_ACK"
-	EventMessage          = "MESSAGE"
+	EventHeartbeat          = "HEARTBEAT"
+	EventIdentify           = "IDENTIFY"
+	EventReady              = "READY"
+	EventHeartbeatAck       = "HEARTBEAT_ACK"
+	EventMessage            = "MESSAGE"
 	EventRelationshipCreate = "RELATIONSHIP_CREATE"
 	EventRelationshipAccept = "RELATIONSHIP_ACCEPT"
 	EventRelationshipDelete = "RELATIONSHIP_DELETE"
-	EventPresenceUpdate    = "PRESENCE_UPDATE"
+	EventPresenceUpdate     = "PRESENCE_UPDATE"
 )
 
 // Standardized event payload structure
@@ -50,11 +50,11 @@ func NewWebSocketHandler(conn *websocket.Conn, r *http.Request) *WebSocketHandle
 
 	// Default to MessagePack
 	selectedFormat := format.FormatMsgPack
-	
+
 	// Explicitly check query parameter
 	formatParam := r.URL.Query().Get("format")
 	log.Printf("Received WebSocket connection with format parameter: %q", formatParam)
-	
+
 	// Determine format based on query parameter
 	switch formatParam {
 	case "json":
@@ -75,7 +75,7 @@ func NewWebSocketHandler(conn *websocket.Conn, r *http.Request) *WebSocketHandle
 	log.Printf("Initializing WebSocket handler with format: %s", selectedFormat)
 
 	return &WebSocketHandler{
-		conn:             conn,
+		conn:            conn,
 		encoder:         encoder,
 		userRepo:        repository.NewUserRepository(database.GetSession()),
 		notificationSvc: services.NewNotificationService(nil),
@@ -86,15 +86,15 @@ func NewWebSocketHandler(conn *websocket.Conn, r *http.Request) *WebSocketHandle
 
 func (h *WebSocketHandler) HandlePayload(messageType int, payload []byte) error {
 	log.Printf("Received payload: messageType=%d, length=%d, hex=%x", messageType, len(payload), payload)
-	
+
 	// Try decoding with multiple formats
 	var base BasePayload
 	var err error
 	var successfulFormat string
 
 	// List of encoders to try
-	encoders := []struct{
-		name string
+	encoders := []struct {
+		name    string
 		encoder format.Encoder
 	}{
 		{"Primary", h.encoder},
@@ -143,8 +143,8 @@ func (h *WebSocketHandler) handleIdentify(payload []byte) error {
 	var err error
 
 	// Try multiple encoders
-	encoders := []struct{
-		name string
+	encoders := []struct {
+		name    string
 		encoder format.Encoder
 	}{
 		{"Primary", h.encoder},
@@ -194,10 +194,10 @@ func (h *WebSocketHandler) handleIdentify(payload []byte) error {
 
 	// If user's status is not offline, broadcast presence update
 	// if details.Presence.Status != "offline" {
-		log.Printf("Broadcasting presence update for user %s", userID)
-		if err := Manager.BroadcastPresenceUpdate(userID, details.Presence.Status, details.Presence.CustomStatus, h.userRepo); err != nil {
-			log.Printf("Failed to broadcast presence update: %v", err)
-		}
+	log.Printf("Broadcasting presence update for user %s", userID)
+	if err := Manager.BroadcastPresenceUpdate(userID, details.Presence.Status, details.Presence.CustomStatus, h.userRepo); err != nil {
+		log.Printf("Failed to broadcast presence update: %v", err)
+	}
 	// }
 
 	// Get user relationships and requests
@@ -231,6 +231,23 @@ func (h *WebSocketHandler) handleIdentify(payload []byte) error {
 		userIDsToFetch[id] = true
 	}
 
+	// Get user rooms
+	rooms, err := h.userRepo.GetUserRooms(userID)
+	if err != nil {
+		log.Printf("Failed to get user rooms: %v", err)
+		rooms = []repository.Room{}
+	}
+	log.Printf("[WebSocket:READY] Got %d rooms for user %s", len(rooms), userID)
+
+	// Add recipient IDs from group PMs
+	for _, room := range rooms {
+		if room.Type == 1 {
+			for _, recipientID := range room.Recipients {
+				userIDsToFetch[recipientID] = true
+			}
+		}
+	}
+
 	// Convert map keys back to slice
 	uniqueUserIDs := make([]string, 0, len(userIDsToFetch))
 	for id := range userIDsToFetch {
@@ -248,10 +265,11 @@ func (h *WebSocketHandler) handleIdentify(payload []byte) error {
 	readyPayload := EventPayload{
 		Op: EventReady,
 		D: map[string]interface{}{
-			"client_user":   details,
-			"users":         relatedUsers,
-			"relationships": relationships,
+			"client_user":           details,
+			"users":                 relatedUsers,
+			"relationships":         relationships,
 			"relationship_requests": relationshipRequests,
+			"rooms":                 rooms,
 		},
 	}
 
@@ -263,8 +281,8 @@ func (h *WebSocketHandler) handleHeartbeat(payload []byte) error {
 	var err error
 
 	// Try multiple encoders
-	encoders := []struct{
-		name string
+	encoders := []struct {
+		name    string
 		encoder format.Encoder
 	}{
 		{"Primary", h.encoder},
@@ -295,8 +313,8 @@ func (h *WebSocketHandler) handleHeartbeat(payload []byte) error {
 	log.Printf("[%s] Received heartbeat from user %s: %d", h.connectionID, h.userID, heartbeat.Timestamp)
 	return h.sendResponse(EventPayload{
 		Op: EventHeartbeatAck,
-		D:  map[string]interface{}{
-			"timestamp": time.Now().UnixMilli(),
+		D: map[string]interface{}{
+			"timestamp":     time.Now().UnixMilli(),
 			"connection_id": h.connectionID,
 		},
 	})
@@ -308,7 +326,7 @@ func (h *WebSocketHandler) handleMessage(payload []byte) error {
 		return fmt.Errorf("failed to decode message payload: %v", err)
 	}
 
-	log.Printf("Received message from %s in channel %s: %s", 
+	log.Printf("Received message from %s in channel %s: %s",
 		h.userID, message.ChannelID, message.Content)
 
 	return h.sendResponse(EventPayload{
@@ -349,7 +367,7 @@ func (h *WebSocketHandler) sendResponse(response interface{}) error {
 
 func (h *WebSocketHandler) Close() {
 	log.Printf("Closing WebSocket connection for user %s", h.userID)
-	
+
 	// Remove connection from ConnectionManager
 	if h.userID != "" {
 		Manager.RemoveConnection(h.userID, h)
@@ -369,7 +387,7 @@ func (h *WebSocketHandler) Close() {
 				if err := Manager.BroadcastPresenceUpdate(h.userID, "offline", details.Presence.CustomStatus, h.userRepo); err != nil {
 					log.Printf("Failed to broadcast offline presence update: %v", err)
 				}
-				
+
 				// Update the user's status in the database
 				if err := h.userRepo.SetUserOffline(h.userID, h.sessionToken); err != nil {
 					log.Printf("Failed to set user offline: %v", err)

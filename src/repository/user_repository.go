@@ -232,15 +232,15 @@ func (r *UserRepository) GetUserRelationshipRequests(userID string) ([]Relations
 	// Get incoming requests (where user is recipient)
 	query := "SELECT id, sender_id, recipient_id FROM relationships_by_recipient WHERE recipient_id = ?"
 	log.Printf("[GetUserRelationshipRequests] Executing recipient query: %s with userID: %s", query, userID)
-	
+
 	recipientIter := r.session.Query(query, userID).Iter()
 
 	var id, senderID, recipientID string
 
 	for recipientIter.Scan(&id, &senderID, &recipientID) {
-		log.Printf("[GetUserRelationshipRequests] Found incoming request: id=%s, sender=%s, recipient=%s", 
+		log.Printf("[GetUserRelationshipRequests] Found incoming request: id=%s, sender=%s, recipient=%s",
 			id, senderID, recipientID)
-		
+
 		relationships = append(relationships, Relationship{
 			ID:          id,
 			SenderID:    senderID,
@@ -257,13 +257,13 @@ func (r *UserRepository) GetUserRelationshipRequests(userID string) ([]Relations
 	// Get outgoing requests (where user is sender)
 	senderQuery := "SELECT id, sender_id, recipient_id FROM relationships_by_sender WHERE sender_id = ?"
 	log.Printf("[GetUserRelationshipRequests] Executing sender query: %s with userID: %s", senderQuery, userID)
-	
+
 	senderIter := r.session.Query(senderQuery, userID).Iter()
 
 	for senderIter.Scan(&id, &senderID, &recipientID) {
-		log.Printf("[GetUserRelationshipRequests] Found outgoing request: id=%s, sender=%s, recipient=%s", 
+		log.Printf("[GetUserRelationshipRequests] Found outgoing request: id=%s, sender=%s, recipient=%s",
 			id, senderID, recipientID)
-		
+
 		relationships = append(relationships, Relationship{
 			ID:          id,
 			SenderID:    senderID,
@@ -347,4 +347,88 @@ func (r *UserRepository) SetUserPresence(userID string, status string, customSta
 	}
 
 	return nil
+}
+
+// Room represents a chat room structure
+type Room struct {
+	ID            string    `json:"id"`
+	Creator       *string   `json:"creator,omitempty"` // null if DM, set if group
+	Recipients    []string  `json:"recipients"`        // array of user IDs
+	Type          int       `json:"type"`              // 0 = DM, 1 = Group DM, 2 = Server Channel
+	LastMessageId string    `json:"last_message_id,omitempty"`
+	CreatedAt     time.Time `json:"created_at"`
+	UpdatedAt     time.Time `json:"updated_at,omitempty"`
+}
+
+// GetUserRooms retrieves all rooms that a user is a member of
+func (r *UserRepository) GetUserRooms(userID string) ([]Room, error) {
+	if r.session == nil {
+		return nil, ErrDatabaseNotInitialized
+	}
+
+	log.Printf("[GetUserRooms] Getting rooms for user: %s", userID)
+
+	// First get all room IDs for this user from room_recipients_by_user
+	roomIDs := make([]string, 0)
+	roomIDsQuery := "SELECT room_id FROM room_recipients_by_user WHERE user_id = ?"
+	roomIDsIter := r.session.Query(roomIDsQuery, userID).Iter()
+
+	var roomID string
+	for roomIDsIter.Scan(&roomID) {
+		roomIDs = append(roomIDs, roomID)
+	}
+
+	if err := roomIDsIter.Close(); err != nil {
+		log.Printf("[GetUserRooms] Error closing room IDs iterator: %v", err)
+		return nil, err
+	}
+
+	log.Printf("[GetUserRooms] Found %d room IDs for user %s: %v", len(roomIDs), userID, roomIDs)
+
+	// Now get the full room data for each room ID
+	rooms := make([]Room, 0, len(roomIDs))
+	for _, id := range roomIDs {
+		var room Room
+		var creator, lastMessageId *string
+		var recipients []string
+		var createdAt, updatedAt time.Time
+
+		roomQuery := "SELECT id, creator, recipients, type, last_message_id, created_at, updated_at FROM rooms WHERE id = ?"
+		if err := r.session.Query(roomQuery, id).Scan(&room.ID, &creator, &recipients, &room.Type, &lastMessageId, &createdAt, &updatedAt); err != nil {
+			log.Printf("[GetUserRooms] Error fetching room details for room ID %s: %v", id, err)
+			continue
+		}
+
+		room.Creator = creator
+		room.Recipients = recipients
+		if lastMessageId != nil {
+			room.LastMessageId = *lastMessageId
+		}
+		room.CreatedAt = createdAt
+		room.UpdatedAt = updatedAt
+
+		rooms = append(rooms, room)
+	}
+
+	log.Printf("[GetUserRooms] Returning %d rooms for user %s", len(rooms), userID)
+	return rooms, nil
+}
+
+func (r *UserRepository) GetRoomMembers(roomID string) ([]string, error) {
+	if r.session == nil {
+		return nil, ErrDatabaseNotInitialized
+	}
+
+	log.Printf("[GetRoomMembers] Getting members for room: %s", roomID)
+
+	// Get recipients directly from the rooms table
+	var recipients []string
+	query := "SELECT recipients FROM rooms WHERE id = ?"
+	if err := r.session.Query(query, roomID).Scan(&recipients); err != nil {
+		log.Printf("[GetRoomMembers] Error fetching room recipients: %v", err)
+		return nil, err
+	}
+
+	log.Printf("[GetRoomMembers] Found %d members for room %s", len(recipients), roomID)
+	return recipients, nil
 }

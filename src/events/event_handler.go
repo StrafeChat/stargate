@@ -14,12 +14,12 @@ import (
 
 // Event represents a generic event structure for broadcasting
 type Event struct {
-	Type        string `json:"type"`
-	ID          string `json:"id"`
-	SenderID    string `json:"sender_id"`
-	RecipientId string `json:"recipient_id"`
-	CreatedAt   int64  `json:"created_at"`
-	Data map[string]interface{} `json:"data"`
+	Type        string                 `json:"type"`
+	ID          string                 `json:"id"`
+	SenderID    string                 `json:"sender_id"`
+	RecipientId string                 `json:"recipient_id"`
+	CreatedAt   int64                  `json:"created_at"`
+	Data        map[string]interface{} `json:"data"`
 }
 
 // EventHandler manages event broadcasting
@@ -112,20 +112,20 @@ func (h *EventHandler) Broadcast(userID string, eventData []byte) {
 		}
 	}
 
-	log.Printf("Broadcast summary for user %s: %d successful, %d failed", 
+	log.Printf("Broadcast summary for user %s: %d successful, %d failed",
 		userID, successCount, failureCount)
 }
 
 /*_ StartEventListener begins listening to Redis pub/sub events with enhanced logging _*/
 func (h *EventHandler) StartEventListener() {
 	log.Println("Starting Redis pub/sub event listener")
-	
-	pubsub := database.Rdb.Subscribe("RELATIONSHIP_EVENTS", "USER_EVENTS")
+
+	pubsub := database.Rdb.Subscribe("RELATIONSHIP_EVENTS", "USER_EVENTS", "ROOM_EVENTS")
 	defer pubsub.Close()
 
 	ch := pubsub.Channel()
 	for msg := range ch {
-		log.Printf("Received Redis pub/sub message: Channel=%s, Payload=%s", 
+		log.Printf("Received Redis pub/sub message: Channel=%s, Payload=%s",
 			msg.Channel, msg.Payload)
 
 		payload := []byte(strings.TrimSpace(msg.Payload))
@@ -140,14 +140,13 @@ func (h *EventHandler) StartEventListener() {
 			log.Printf("Error unmarshaling event (payload: %s): %v", string(payload), err)
 			continue
 		}
-		
 
 		if event.Type == "" {
 			log.Printf("Received event with empty type: %+v", event)
 			continue
 		}
 
-		log.Printf("Processed event: Type=%s, SenderID=%s, CreatedAt=%d", 
+		log.Printf("Processed event: Type=%s, SenderID=%s, CreatedAt=%d",
 			event.Type, event.SenderID, event.CreatedAt)
 
 		var opCode string
@@ -190,21 +189,21 @@ func (h *EventHandler) StartEventListener() {
 
 		switch event.Type {
 		case "RELATIONSHIP_CREATE":
-			log.Printf("Broadcasting Relationship Create Event: Sender=%s, Recipient=%s", 
+			log.Printf("Broadcasting Relationship Create Event: Sender=%s, Recipient=%s",
 				event.SenderID, event.RecipientId)
-			
+
 			h.Broadcast(event.RecipientId, wsPayloadBytes)
 			h.Broadcast(event.SenderID, wsPayloadBytes)
 
 		case "RELATIONSHIP_ACCEPT":
 			log.Printf("Broadcasting Relationship Accept Event: Sender=%s", event.SenderID)
-			
+
 			h.Broadcast(event.SenderID, wsPayloadBytes)
 			h.Broadcast(event.RecipientId, wsPayloadBytes)
 
 		case "RELATIONSHIP_DELETE":
 			log.Printf("Broadcasting Relationship Delete Event: Sender=%s", event.SenderID)
-			
+
 			h.Broadcast(event.SenderID, wsPayloadBytes)
 			h.Broadcast(event.RecipientId, wsPayloadBytes)
 
@@ -241,6 +240,54 @@ func (h *EventHandler) StartEventListener() {
 			userRepo := repository.NewUserRepository(database.Session)
 			if err := Manager.BroadcastPresenceUpdate(userID, status, customStatus, userRepo); err != nil {
 				log.Printf("Error broadcasting presence update: %v", err)
+			}
+
+		case "MESSAGE_CREATE":
+			log.Printf("Broadcasting Message Create Event: Room=%s, Sender=%s", event.Data["room_id"], event.SenderID)
+
+			// Get room ID from event data
+			roomID, ok := event.Data["room_id"].(string)
+			if !ok {
+				log.Printf("Message event has no room_id")
+				continue
+			}
+
+			// Construct message payload
+			messagePayload := struct {
+				Op string      `json:"op"`
+				D  interface{} `json:"d"`
+			}{
+				Op: EventMessage,
+				D: map[string]interface{}{
+					"id":          event.Data["id"],
+					"content":     event.Data["content"],
+					"author_id":   event.Data["author_id"],
+					"room_id":     roomID,
+					"created_at":  event.Data["created_at"],
+					"edited_at":   nil,
+					"attachments": event.Data["attachments"],
+					"type":        "message_create",
+				},
+			}
+
+			// Marshal the message payload
+			wsPayloadBytes, err = json.Marshal(messagePayload)
+			if err != nil {
+				log.Printf("Error marshaling message payload: %v", err)
+				continue
+			}
+
+			// Get room members from repository
+			userRepo := repository.NewUserRepository(database.Session)
+			roomMembers, err := userRepo.GetRoomMembers(roomID)
+			if err != nil {
+				log.Printf("Error getting room members: %v", err)
+				continue
+			}
+
+			// Broadcast to all room members
+			for _, memberID := range roomMembers {
+				h.Broadcast(memberID, wsPayloadBytes)
 			}
 
 		default:

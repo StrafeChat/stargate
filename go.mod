@@ -1,6 +1,8 @@
 module github.com/StrafeChat/stargate
 
-go 1.22.4
+go 1.23
+
+toolchain go1.23.6
 
 require (
 	github.com/SherClockHolmes/webpush-go v1.3.0
