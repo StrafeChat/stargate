@@ -242,6 +242,52 @@ func (h *EventHandler) StartEventListener() {
 				log.Printf("Error broadcasting presence update: %v", err)
 			}
 
+		case "ROOM_CREATE":
+			log.Printf("Broadcasting Room Create Event: Room=%s, Creator=%s", event.Data["room_id"], event.SenderID)
+
+			// Construct room creation payload
+			roomPayload := struct {
+				Op string      `json:"op"`
+				D  interface{} `json:"d"`
+			}{
+				Op: EventDispatch,
+				D: map[string]interface{}{
+					"type": "ROOM_CREATE",
+					"data": map[string]interface{}{
+						"id":              event.Data["id"],
+						"name":            event.Data["name"],
+						"type":            event.Data["type"],
+						"recipients":      event.Data["recipients"],
+						"creator":         event.Data["creator"],
+						"last_message_id": event.Data["last_message_id"],
+						"icon":            event.Data["icon"],
+						"created_at":      event.Data["created_at"],
+						"updated_at":      event.Data["updated_at"],
+					},
+				},
+			}
+
+			// Marshal the room payload
+			wsPayloadBytes, err = json.Marshal(roomPayload)
+			if err != nil {
+				log.Printf("Error marshaling room payload: %v", err)
+				continue
+			}
+
+			// Get recipients from event data
+			recipients, ok := event.Data["recipients"].([]interface{})
+			if !ok {
+				log.Printf("Room event has invalid recipients data")
+				continue
+			}
+
+			// Broadcast to all recipients
+			for _, recipient := range recipients {
+				if recipientID, ok := recipient.(string); ok {
+					h.Broadcast(recipientID, wsPayloadBytes)
+				}
+			}
+
 		case "MESSAGE_CREATE":
 			log.Printf("Broadcasting Message Create Event: Room=%s, Sender=%s", event.Data["room_id"], event.SenderID)
 
@@ -259,14 +305,16 @@ func (h *EventHandler) StartEventListener() {
 			}{
 				Op: EventMessage,
 				D: map[string]interface{}{
-					"id":          event.Data["id"],
-					"content":     event.Data["content"],
-					"author_id":   event.Data["author_id"],
-					"room_id":     roomID,
-					"created_at":  event.Data["created_at"],
-					"edited_at":   nil,
-					"attachments": event.Data["attachments"],
-					"type":        "message_create",
+					"type": "MESSAGE_CREATE",
+					"data": map[string]interface{}{
+						"id":          event.Data["id"],
+						"content":     event.Data["content"],
+						"author_id":   event.Data["author_id"],
+						"room_id":     roomID,
+						"created_at":  event.Data["created_at"],
+						"edited_at":   nil,
+						"attachments": event.Data["attachments"],
+					},
 				},
 			}
 
