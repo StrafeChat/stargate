@@ -207,6 +207,99 @@ func (h *EventHandler) StartEventListener() {
 			h.Broadcast(event.SenderID, wsPayloadBytes)
 			h.Broadcast(event.RecipientId, wsPayloadBytes)
 
+		case "MESSAGE_DELETE":
+			log.Printf("Broadcasting Message Delete Event: Room=%s, Message=%s", event.Data["room_id"], event.Data["id"])
+
+			// Get room ID from event data
+			roomID, ok := event.Data["room_id"].(string)
+			if !ok {
+				log.Printf("Message delete event has no room_id")
+				continue
+			}
+
+			// Construct message deletion payload
+			messagePayload := struct {
+				Op string      `json:"op"`
+				D  interface{} `json:"d"`
+			}{
+				Op: EventMessage,
+				D: map[string]interface{}{
+					"event_type": "MESSAGE_DELETE",
+					"data": map[string]interface{}{
+						"id":      event.Data["id"],
+						"room_id": roomID,
+					},
+				},
+			}
+
+			// Marshal the message payload
+			wsPayloadBytes, err = json.Marshal(messagePayload)
+			if err != nil {
+				log.Printf("Error marshaling message deletion payload: %v", err)
+				continue
+			}
+
+			// Get room members from repository
+			userRepo := repository.NewUserRepository(database.Session)
+			roomMembers, err := userRepo.GetRoomMembers(roomID)
+			if err != nil {
+				log.Printf("Error getting room members: %v", err)
+				continue
+			}
+
+			// Broadcast to all room members
+			for _, memberID := range roomMembers {
+				h.Broadcast(memberID, wsPayloadBytes)
+			}
+
+		case "MESSAGE_EDIT":
+			log.Printf("Broadcasting Message Edit Event: Room=%s, Message=%s", event.Data["room_id"], event.Data["id"])
+
+			// Get room ID from event data
+			roomID, ok := event.Data["room_id"].(string)
+			if !ok {
+				log.Printf("Message edit event has no room_id")
+				continue
+			}
+
+			// Construct message edit payload
+			messagePayload := struct {
+				Op string      `json:"op"`
+				D  interface{} `json:"d"`
+			}{
+				Op: EventMessage,
+				D: map[string]interface{}{
+					"event_type": "MESSAGE_EDIT",
+					"data": map[string]interface{}{
+						"id":        event.Data["id"],
+						"room_id":   roomID,
+						"content":   event.Data["content"],
+						"edited_at": event.Data["edited_at"],
+						"author_id": event.Data["author_id"],
+					},
+				},
+			}
+
+			// Marshal the message payload
+			wsPayloadBytes, err = json.Marshal(messagePayload)
+			if err != nil {
+				log.Printf("Error marshaling message edit payload: %v", err)
+				continue
+			}
+
+			// Get room members from repository
+			userRepo := repository.NewUserRepository(database.Session)
+			roomMembers, err := userRepo.GetRoomMembers(roomID)
+			if err != nil {
+				log.Printf("Error getting room members: %v", err)
+				continue
+			}
+
+			// Broadcast to all room members
+			for _, memberID := range roomMembers {
+				h.Broadcast(memberID, wsPayloadBytes)
+			}
+
 		case "PRESENCE_UPDATE":
 			if event.Data == nil {
 				log.Printf("Presence update event has no data")
@@ -307,13 +400,14 @@ func (h *EventHandler) StartEventListener() {
 				D: map[string]interface{}{
 					"type": "MESSAGE_CREATE",
 					"data": map[string]interface{}{
-						"id":          event.Data["id"],
-						"content":     event.Data["content"],
-						"author_id":   event.Data["author_id"],
-						"room_id":     roomID,
-						"created_at":  event.Data["created_at"],
-						"edited_at":   nil,
-						"attachments": event.Data["attachments"],
+						"id":                 event.Data["id"],
+						"content":            event.Data["content"],
+						"author_id":          event.Data["author_id"],
+						"room_id":            roomID,
+						"created_at":         event.Data["created_at"],
+						"edited_at":          nil,
+						"attachments":        event.Data["attachments"],
+						"message_references": event.Data["message_references"],
 					},
 				},
 			}
