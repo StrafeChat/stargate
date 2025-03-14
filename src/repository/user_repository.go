@@ -432,3 +432,7 @@ func (r *UserRepository) GetRoomMembers(roomID string) ([]string, error) {
 	log.Printf("[GetRoomMembers] Found %d members for room %s", len(recipients), roomID)
 	return recipients, nil
 }
+
+func (r *UserRepository) GetSession() *gocql.Session {
+	return r.session
+}

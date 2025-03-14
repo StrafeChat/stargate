@@ -432,6 +432,84 @@ func (h *EventHandler) StartEventListener() {
 				h.Broadcast(memberID, wsPayloadBytes)
 			}
 
+		case "TYPING_START":
+			// Initial log before room_id extraction
+			log.Printf("Processing typing indicator event from user %s", event.SenderID)
+
+			// Get room ID from event data
+			var roomID string
+			var ok bool
+
+			// First check if room_id exists directly in the event payload (from Redis pub/sub)
+			if roomID, ok = event.Data["room_id"].(string); !ok {
+				// Check if there's a room_id field at the root level of the event
+				// The Redis payload format often has room_id at the root level for typing events
+				var payloadMap map[string]interface{}
+				if err := json.Unmarshal(payload, &payloadMap); err != nil {
+					log.Printf("Error unmarshaling payload for typing event: %v", err)
+					continue
+				}
+				roomIDField, exists := payloadMap["room_id"]
+				if exists {
+					if roomIDStr, isString := roomIDField.(string); isString {
+						roomID = roomIDStr
+						ok = true
+
+						// Initialize Data map if it's nil
+						if event.Data == nil {
+							event.Data = make(map[string]interface{})
+						}
+
+						// Store the room_id in the Data map for later use
+						event.Data["room_id"] = roomID
+					}
+				}
+			}
+
+			if !ok {
+				log.Printf("Typing indicator event has no room_id")
+				continue
+			}
+
+			// Log the extracted room_id for debugging
+			log.Printf("Broadcasting Typing Indicator Event: Room=%s, User=%s", roomID, event.SenderID)
+
+			// Construct typing indicator payload
+			typingPayload := struct {
+				Op string      `json:"op"`
+				D  interface{} `json:"d"`
+			}{
+				Op: EventDispatch,
+				D: map[string]interface{}{
+					"type": "TYPING_INDICATOR",
+					"data": map[string]interface{}{
+						"room_id":    roomID,
+						"user_id":    event.SenderID,
+						"created_at": event.CreatedAt,
+					},
+				},
+			}
+
+			// Marshal the typing payload
+			wsPayloadBytes, err = json.Marshal(typingPayload)
+			if err != nil {
+				log.Printf("Error marshaling typing indicator payload: %v", err)
+				continue
+			}
+
+			// Get room members from repository
+			userRepo := repository.NewUserRepository(database.Session)
+			roomMembers, err := userRepo.GetRoomMembers(roomID)
+			if err != nil {
+				log.Printf("Error getting room members: %v", err)
+				continue
+			}
+
+			// Broadcast to all room members
+			for _, memberID := range roomMembers {
+				h.Broadcast(memberID, wsPayloadBytes)
+			}
+
 		default:
 			log.Printf("Unknown event type: %s", event.Type)
 		}

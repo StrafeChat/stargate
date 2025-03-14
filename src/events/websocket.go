@@ -192,6 +192,19 @@ func (h *WebSocketHandler) handleIdentify(payload []byte) error {
 		details = repository.UserDetails{ID: userID}
 	}
 
+	// Get unread messages for all rooms
+	unreadRepo := repository.NewUnreadRepository(h.userRepo.GetSession())
+	unreadMessages, err := unreadRepo.GetUnreadMessagesForUser(userID)
+	if err != nil {
+		log.Printf("Failed to get unread messages: %v", err)
+		unreadMessages = make(map[string][]string)
+	} else {
+		log.Printf("[WebSocket:READY] Got unread messages for user %s: %+v", userID, unreadMessages)
+		if len(unreadMessages) == 0 {
+			log.Printf("[WebSocket:READY] Warning: No unread messages found for user %s", userID)
+		}
+	}
+
 	// If user's status is not offline, broadcast presence update
 	// if details.Presence.Status != "offline" {
 	log.Printf("Broadcasting presence update for user %s", userID)
@@ -270,6 +283,7 @@ func (h *WebSocketHandler) handleIdentify(payload []byte) error {
 			"relationships":         relationships,
 			"relationship_requests": relationshipRequests,
 			"rooms":                 rooms,
+			"unread_messages":       unreadMessages,
 		},
 	}
 
