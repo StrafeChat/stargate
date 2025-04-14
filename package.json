@@ -14,7 +14,7 @@
     "better-cassandra": "^1.1.8",
     "cassandra-driver": "^4.7.2",
     "dotenv": "^16.4.5",
-    "redis": "^4.6.15",
+    "redis": "^4.7.0",
     "ws": "^8.18.0"
   },
   "devDependencies": {
