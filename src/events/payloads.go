@@ -28,8 +28,9 @@ type HeartbeatPayload struct {
 
 type MessagePayload struct {
 	BasePayload
-	ChannelID string `json:"channel_id" msgpack:"channel_id"`
-	Content   string `json:"content" msgpack:"content"`
+	ChannelID   string   `json:"channel_id" msgpack:"channel_id"`
+	Content     string   `json:"content" msgpack:"content"`
+	Attachments []string `json:"attachments,omitempty" msgpack:"attachments,omitempty"`
 }
 
 type HeartbeatAckPayload struct {
