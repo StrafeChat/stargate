@@ -381,7 +381,343 @@ func (h *EventHandler) StartEventListener() {
 				}
 			}
 
-		case "MESSAGE_CREATE":
+		case "ROOM_DELETE":
+			log.Printf("Broadcasting Room Delete Event: Room=%s, Deleted by=%s", event.Data["room_id"], event.Data["deleted_by"])
+
+			// Get room ID from event data
+			roomID, ok := event.Data["room_id"].(string)
+			if !ok {
+				log.Printf("Room delete event has no room_id")
+				continue
+			}
+
+			// Construct room deletion payload
+			roomPayload := struct {
+				Op string      `json:"op"`
+				D  interface{} `json:"d"`
+			}{
+				Op: EventDispatch,
+				D: map[string]interface{}{
+					"type": "ROOM_DELETE",
+					"data": map[string]interface{}{
+						"room_id":    roomID,
+						"deleted_by": event.Data["deleted_by"],
+					},
+				},
+			}
+
+			// Marshal the room payload
+			wsPayloadBytes, err = json.Marshal(roomPayload)
+			if err != nil {
+				log.Printf("Error marshaling room deletion payload: %v", err)
+				continue
+			}
+
+			// Get room members from repository before deletion
+			userRepo := repository.NewUserRepository(database.Session)
+			roomMembers, err := userRepo.GetRoomMembers(roomID)
+			if err != nil {
+				log.Printf("Error getting room members for deletion: %v", err)
+				continue
+			}
+
+			// Broadcast to all room members
+			for _, memberID := range roomMembers {
+				h.Broadcast(memberID, wsPayloadBytes)
+			}
+
+		case "ROOM_MEMBER_ADD":
+			log.Printf("Broadcasting Room Member Add Event: Room=%s, User=%s, Added by=%s", event.Data["room_id"], event.Data["user_id"], event.Data["added_by"])
+
+			// Get room ID from event data
+			roomID, ok := event.Data["room_id"].(string)
+			if !ok {
+				log.Printf("Room member add event has no room_id")
+				continue
+			}
+
+			// Construct room member addition payload
+			roomPayload := struct {
+				Op string      `json:"op"`
+				D  interface{} `json:"d"`
+			}{
+				Op: EventDispatch,
+				D: map[string]interface{}{
+					"type": "ROOM_MEMBER_ADD",
+					"data": map[string]interface{}{
+						"room_id":    roomID,
+						"user_id":    event.Data["user_id"],
+						"added_by":   event.Data["added_by"],
+						"recipients": event.Data["recipients"],
+					},
+				},
+			}
+
+			// Marshal the room payload
+			wsPayloadBytes, err = json.Marshal(roomPayload)
+			if err != nil {
+				log.Printf("Error marshaling room member addition payload: %v", err)
+				continue
+			}
+
+			// Get updated recipients from event data
+			recipients, ok := event.Data["recipients"].([]interface{})
+			if !ok {
+				log.Printf("Room member add event has invalid recipients data")
+				continue
+			}
+
+			// Broadcast to all recipients (including the new member)
+			for _, recipient := range recipients {
+				if recipientID, ok := recipient.(string); ok {
+					h.Broadcast(recipientID, wsPayloadBytes)
+				}
+			}
+
+		case "ROOM_MEMBER_REMOVE":
+			log.Printf("Broadcasting Room Member Remove Event: Room=%s, User=%s, Removed by=%s", event.Data["room_id"], event.Data["user_id"], event.Data["removed_by"])
+
+			// Get room ID from event data
+			roomID, ok := event.Data["room_id"].(string)
+			if !ok {
+				log.Printf("Room member remove event has no room_id")
+				continue
+			}
+
+			// Construct room member removal payload
+			roomPayload := struct {
+				Op string      `json:"op"`
+				D  interface{} `json:"d"`
+			}{
+				Op: EventDispatch,
+				D: map[string]interface{}{
+					"type": "ROOM_MEMBER_REMOVE",
+					"data": map[string]interface{}{
+						"room_id":     roomID,
+						"user_id":     event.Data["user_id"],
+						"removed_by":  event.Data["removed_by"],
+						"recipients":  event.Data["recipients"],
+						"new_creator": event.Data["new_creator"],
+					},
+				},
+			}
+
+			// Marshal the room payload
+			wsPayloadBytes, err = json.Marshal(roomPayload)
+			if err != nil {
+				log.Printf("Error marshaling room member removal payload: %v", err)
+				continue
+			}
+
+			// Get updated recipients from event data
+			recipients, ok := event.Data["recipients"].([]interface{})
+			if !ok {
+				log.Printf("Room member remove event has invalid recipients data")
+				continue
+			}
+
+			// Also notify the removed user
+			removedUserID, ok := event.Data["user_id"].(string)
+			if ok {
+				h.Broadcast(removedUserID, wsPayloadBytes)
+			}
+
+			// Broadcast to all remaining recipients
+			for _, recipient := range recipients {
+				if recipientID, ok := recipient.(string); ok {
+					h.Broadcast(recipientID, wsPayloadBytes)
+				}
+			}
+
+		case "ROOM_ICON_UPDATE":
+			log.Printf("Processing Room Icon Update Event")
+
+			// Get room ID - check root level first, then event.Data
+			var roomID string
+			var ok bool
+			var payloadMap map[string]interface{}
+			if err := json.Unmarshal(payload, &payloadMap); err != nil {
+				log.Printf("Error unmarshaling payload for room icon update: %v", err)
+				continue
+			}
+
+			if roomIDField, exists := payloadMap["room_id"]; exists {
+				if roomIDStr, isString := roomIDField.(string); isString {
+					roomID = roomIDStr
+					ok = true
+				}
+			} else if event.Data != nil {
+				roomID, ok = event.Data["room_id"].(string)
+			}
+
+			if !ok {
+				log.Printf("Room icon update event has no room_id")
+				continue
+			}
+
+			// Get icon URL - check root level first, then event.Data
+			var iconURL string
+			if iconURLField, exists := payloadMap["icon_url"]; exists {
+				if iconURLStr, isString := iconURLField.(string); isString {
+					iconURL = iconURLStr
+					ok = true
+				}
+			} else if event.Data != nil {
+				iconURL, ok = event.Data["icon_url"].(string)
+			}
+
+			if !ok {
+				log.Printf("Room icon update event has no icon_url")
+				continue
+			}
+
+			log.Printf("Broadcasting Room Icon Update Event: Room=%s, Icon=%s", roomID, iconURL)
+
+			// Construct room update payload with icon
+			updateData := map[string]interface{}{
+				"room_id":   roomID,
+				"icon":      iconURL,
+				"timestamp": event.CreatedAt,
+			}
+
+			roomPayload := struct {
+				Op string      `json:"op"`
+				D  interface{} `json:"d"`
+			}{
+				Op: EventDispatch,
+				D: map[string]interface{}{
+					"type": "ROOM_UPDATE",
+					"data": updateData,
+				},
+			}
+
+			// Marshal the room payload
+			wsPayloadBytes, err = json.Marshal(roomPayload)
+			if err != nil {
+				log.Printf("Error marshaling room icon update payload: %v", err)
+				continue
+			}
+
+			// Get room members from repository
+			userRepo := repository.NewUserRepository(database.Session)
+			roomMembers, err := userRepo.GetRoomMembers(roomID)
+			if err != nil {
+				log.Printf("Error getting room members for icon update: %v", err)
+				continue
+			}
+
+			// Broadcast to all room members
+			for _, memberID := range roomMembers {
+				h.Broadcast(memberID, wsPayloadBytes)
+			}
+
+		case "ROOM_UPDATE":
+			log.Printf("Broadcasting Room Update Event: Room=%s, Updated by=%s", event.Data["room_id"], event.Data["updated_by"])
+
+			// Get room ID from event data
+			roomID, ok := event.Data["room_id"].(string)
+			if !ok {
+				log.Printf("Room update event has no room_id")
+				continue
+			}
+
+			// Construct room update payload
+			updateData := map[string]interface{}{
+				"room_id":    roomID,
+				"updated_by": event.Data["updated_by"],
+				"timestamp":  event.Data["timestamp"],
+			}
+
+			// Add updated fields if they exist
+			if name, exists := event.Data["name"]; exists {
+				updateData["name"] = name
+			}
+			if topic, exists := event.Data["topic"]; exists {
+				updateData["topic"] = topic
+			}
+			if icon, exists := event.Data["icon"]; exists {
+				updateData["icon"] = icon
+			}
+
+			roomPayload := struct {
+				Op string      `json:"op"`
+				D  interface{} `json:"d"`
+			}{
+				Op: EventDispatch,
+				D: map[string]interface{}{
+					"type": "ROOM_UPDATE",
+					"data": updateData,
+				},
+			}
+
+			// Marshal the room payload
+			wsPayloadBytes, err = json.Marshal(roomPayload)
+			if err != nil {
+				log.Printf("Error marshaling room update payload: %v", err)
+				continue
+			}
+
+			// Get room members from repository
+			userRepo := repository.NewUserRepository(database.Session)
+			roomMembers, err := userRepo.GetRoomMembers(roomID)
+			if err != nil {
+				log.Printf("Error getting room members for update: %v", err)
+				continue
+			}
+
+			// Broadcast to all room members
+		for _, memberID := range roomMembers {
+			h.Broadcast(memberID, wsPayloadBytes)
+		}
+
+	case "ROOM_OWNERSHIP_TRANSFER":
+		log.Printf("Broadcasting Room Ownership Transfer Event: Room=%s, Old Owner=%s, New Owner=%s", event.Data["room_id"], event.Data["old_owner"], event.Data["new_owner"])
+
+		// Get room ID from event data
+		roomID, ok := event.Data["room_id"].(string)
+		if !ok {
+			log.Printf("Room ownership transfer event has no room_id")
+			continue
+		}
+
+		// Construct room ownership transfer payload
+		ownershipPayload := struct {
+			Op string      `json:"op"`
+			D  interface{} `json:"d"`
+		}{
+			Op: EventDispatch,
+			D: map[string]interface{}{
+				"type": "ROOM_OWNERSHIP_TRANSFER",
+				"data": map[string]interface{}{
+					"room_id":   roomID,
+					"old_owner": event.Data["old_owner"],
+					"new_owner": event.Data["new_owner"],
+					"timestamp": event.Data["timestamp"],
+				},
+			},
+		}
+
+		// Marshal the ownership transfer payload
+		wsPayloadBytes, err = json.Marshal(ownershipPayload)
+		if err != nil {
+			log.Printf("Error marshaling room ownership transfer payload: %v", err)
+			continue
+		}
+
+		// Get room members from repository
+		userRepo := repository.NewUserRepository(database.Session)
+		roomMembers, err := userRepo.GetRoomMembers(roomID)
+		if err != nil {
+			log.Printf("Error getting room members for ownership transfer: %v", err)
+			continue
+		}
+
+		// Broadcast to all room members
+		for _, memberID := range roomMembers {
+			h.Broadcast(memberID, wsPayloadBytes)
+		}
+
+	case "MESSAGE_CREATE":
 			log.Printf("Broadcasting Message Create Event: Room=%s, Sender=%s", event.Data["room_id"], event.SenderID)
 
 			// Get room ID from event data
@@ -408,6 +744,10 @@ func (h *EventHandler) StartEventListener() {
 						"edited_at":          nil,
 						"attachments":        event.Data["attachments"],
 						"message_references": event.Data["message_references"],
+						"type":               event.Data["type"],
+						"system":             event.Data["system"],
+						"system_type":        event.Data["system_type"],
+						"system_data":        event.Data["system_data"],
 					},
 				},
 			}

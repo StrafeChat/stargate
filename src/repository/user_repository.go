@@ -36,6 +36,8 @@ type UserDetails struct {
 	Banner        string       `json:"banner"`
 	Bot           bool         `json:"bot"`
 	System        bool         `json:"system"`
+	Bio           string       `json:"bio"`
+	AboutMe       string       `json:"about_me"`
 	Flags         int          `json:"flags"`
 	Presence      UserPresence `json:"presence"`
 }
@@ -89,9 +91,11 @@ func (r *UserRepository) GetUserDetails(userID string) (UserDetails, error) {
 	var banner string
 	var bot bool
 	var system bool
+	var bio string
+	var aboutMe string
 	var flags int
-	if err := r.session.Query("SELECT id, username, discriminator, display_name, avatar, banner, bot, system, flags, presence FROM users WHERE id = ?",
-		userID).Scan(&details.ID, &details.Username, &details.Discriminator, &displayName, &avatar, &banner, &bot, &system, &flags, &presence); err != nil {
+	if err := r.session.Query("SELECT id, username, discriminator, display_name, avatar, banner, bot, system, bio, about_me, flags, presence FROM users WHERE id = ?",
+		userID).Scan(&details.ID, &details.Username, &details.Discriminator, &displayName, &avatar, &banner, &bot, &system, &bio, &aboutMe, &flags, &presence); err != nil {
 		log.Printf("Error fetching user details: %v", err)
 		if err == gocql.ErrNotFound {
 			return UserDetails{}, ErrUserNotFound
@@ -108,6 +112,8 @@ func (r *UserRepository) GetUserDetails(userID string) (UserDetails, error) {
 	details.Banner = banner
 	details.Bot = bot
 	details.System = system
+	details.Bio = bio
+	details.AboutMe = aboutMe
 	details.Flags = flags
 	details.Presence = UserPresence{
 		Status:       status,
@@ -355,6 +361,9 @@ type Room struct {
 	Creator       *string   `json:"creator,omitempty"` // null if DM, set if group
 	Recipients    []string  `json:"recipients"`        // array of user IDs
 	Type          int       `json:"type"`              // 0 = DM, 1 = Group DM, 2 = Server Channel
+	Name          *string   `json:"name,omitempty"`    // optional name for group PMs
+	Topic         *string   `json:"topic,omitempty"`   // optional topic for group PMs
+	Icon          *string   `json:"icon,omitempty"`    // optional icon for group PMs
 	LastMessageId string    `json:"last_message_id,omitempty"`
 	CreatedAt     time.Time `json:"created_at"`
 	UpdatedAt     time.Time `json:"updated_at,omitempty"`
@@ -389,18 +398,21 @@ func (r *UserRepository) GetUserRooms(userID string) ([]Room, error) {
 	rooms := make([]Room, 0, len(roomIDs))
 	for _, id := range roomIDs {
 		var room Room
-		var creator, lastMessageId *string
+		var creator, name, topic, icon, lastMessageId *string
 		var recipients []string
 		var createdAt, updatedAt time.Time
 
-		roomQuery := "SELECT id, creator, recipients, type, last_message_id, created_at, updated_at FROM rooms WHERE id = ?"
-		if err := r.session.Query(roomQuery, id).Scan(&room.ID, &creator, &recipients, &room.Type, &lastMessageId, &createdAt, &updatedAt); err != nil {
+		roomQuery := "SELECT id, creator, recipients, type, name, topic, icon, last_message_id, created_at, updated_at FROM rooms WHERE id = ?"
+		if err := r.session.Query(roomQuery, id).Scan(&room.ID, &creator, &recipients, &room.Type, &name, &topic, &icon, &lastMessageId, &createdAt, &updatedAt); err != nil {
 			log.Printf("[GetUserRooms] Error fetching room details for room ID %s: %v", id, err)
 			continue
 		}
 
 		room.Creator = creator
 		room.Recipients = recipients
+		room.Name = name
+		room.Topic = topic
+		room.Icon = icon
 		if lastMessageId != nil {
 			room.LastMessageId = *lastMessageId
 		}
