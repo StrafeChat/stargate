@@ -32,6 +32,7 @@ type UserDetails struct {
 	Username      string       `json:"username"`
 	Discriminator int          `json:"discriminator"`
 	DisplayName   string       `json:"display_name"`
+	Email         *string      `json:"email"`
 	Avatar        string       `json:"avatar"`
 	Banner        string       `json:"banner"`
 	Bot           bool         `json:"bot"`
@@ -79,7 +80,7 @@ func (r *UserRepository) ValidateSessionToken(token string) (string, error) {
 	return userID, nil
 }
 
-func (r *UserRepository) GetUserDetails(userID string) (UserDetails, error) {
+func (r *UserRepository) GetUserDetailsWithoutEmail(userID string) (UserDetails, error) {
 	if r.session == nil {
 		return UserDetails{}, ErrDatabaseNotInitialized
 	}
@@ -108,6 +109,53 @@ func (r *UserRepository) GetUserDetails(userID string) (UserDetails, error) {
 	}
 
 	details.DisplayName = displayName
+	// Email is intentionally not set for other users
+	details.Avatar = avatar
+	details.Banner = banner
+	details.Bot = bot
+	details.System = system
+	details.Bio = bio
+	details.AboutMe = aboutMe
+	details.Flags = flags
+	details.Presence = UserPresence{
+		Status:       status,
+		CustomStatus: presence.CustomStatus,
+	}
+
+	return details, nil
+}
+
+func (r *UserRepository) GetUserDetails(userID string) (UserDetails, error) {
+	if r.session == nil {
+		return UserDetails{}, ErrDatabaseNotInitialized
+	}
+
+	var details UserDetails
+	var presence Presence
+	var displayName string
+	var email *string
+	var avatar string
+	var banner string
+	var bot bool
+	var system bool
+	var bio string
+	var aboutMe string
+	var flags int
+	if err := r.session.Query("SELECT id, username, discriminator, display_name, email, avatar, banner, bot, system, bio, about_me, flags, presence FROM users WHERE id = ?",
+		userID).Scan(&details.ID, &details.Username, &details.Discriminator, &displayName, &email, &avatar, &banner, &bot, &system, &bio, &aboutMe, &flags, &presence); err != nil {
+		log.Printf("Error fetching user details: %v", err)
+		if err == gocql.ErrNotFound {
+			return UserDetails{}, ErrUserNotFound
+		}
+		return UserDetails{}, err
+	}
+	status := "offline"
+	if presence.Online {
+		status = presence.Status
+	}
+
+	details.DisplayName = displayName
+	details.Email = email
 	details.Avatar = avatar
 	details.Banner = banner
 	details.Bot = bot
@@ -304,7 +352,7 @@ func (r *UserRepository) GetUsersDetails(userIDs []string) (map[string]UserDetai
 	}
 
 	for userID := range uniqueIDs {
-		details, err := r.GetUserDetails(userID)
+		details, err := r.GetUserDetailsWithoutEmail(userID)
 		if err != nil {
 			if err != ErrUserNotFound {
 				log.Printf("Error fetching details for user %s: %v", userID, err)
