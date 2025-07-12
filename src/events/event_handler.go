@@ -120,7 +120,7 @@ func (h *EventHandler) Broadcast(userID string, eventData []byte) {
 func (h *EventHandler) StartEventListener() {
 	log.Println("Starting Redis pub/sub event listener")
 
-	pubsub := database.Rdb.Subscribe("RELATIONSHIP_EVENTS", "USER_EVENTS", "ROOM_EVENTS")
+	pubsub := database.Rdb.Subscribe("RELATIONSHIP_EVENTS", "USER_EVENTS", "ROOM_EVENTS", "VOICE_EVENTS")
 	defer pubsub.Close()
 
 	ch := pubsub.Channel()
@@ -666,58 +666,105 @@ func (h *EventHandler) StartEventListener() {
 			}
 
 			// Broadcast to all room members
-		for _, memberID := range roomMembers {
-			h.Broadcast(memberID, wsPayloadBytes)
-		}
+			for _, memberID := range roomMembers {
+				h.Broadcast(memberID, wsPayloadBytes)
+			}
+		case "VOICE_PARTICIPANT_JOIN", "VOICE_PARTICIPANT_LEAVE":
+			log.Printf("Broadcasting Voice Join/Leave Event: Room=%s, Joined=%s", event.Data["room_id"], event.Data["participant_id"])
+			log.Printf("Event: %v", event)
 
-	case "ROOM_OWNERSHIP_TRANSFER":
-		log.Printf("Broadcasting Room Ownership Transfer Event: Room=%s, Old Owner=%s, New Owner=%s", event.Data["room_id"], event.Data["old_owner"], event.Data["new_owner"])
+			// Get room ID from event data
+			roomID, ok := event.Data["room_id"].(string)
+			if !ok {
+				log.Printf("Room update event has no room_id")
+				continue
+			}
 
-		// Get room ID from event data
-		roomID, ok := event.Data["room_id"].(string)
-		if !ok {
-			log.Printf("Room ownership transfer event has no room_id")
-			continue
-		}
+			// Construct room update payload
+			updateData := map[string]interface{}{
+				"room_id":        roomID,
+				"participant_id": event.Data["participant_id"],
+				"timestamp":      event.Data["timestamp"],
+			}
 
-		// Construct room ownership transfer payload
-		ownershipPayload := struct {
-			Op string      `json:"op"`
-			D  interface{} `json:"d"`
-		}{
-			Op: EventDispatch,
-			D: map[string]interface{}{
-				"type": "ROOM_OWNERSHIP_TRANSFER",
-				"data": map[string]interface{}{
-					"room_id":   roomID,
-					"old_owner": event.Data["old_owner"],
-					"new_owner": event.Data["new_owner"],
-					"timestamp": event.Data["timestamp"],
+			roomPayload := struct {
+				Op string      `json:"op"`
+				D  interface{} `json:"d"`
+			}{
+				Op: EventDispatch,
+				D: map[string]interface{}{
+					"type": event.Type,
+					"data": updateData,
 				},
-			},
-		}
+			}
 
-		// Marshal the ownership transfer payload
-		wsPayloadBytes, err = json.Marshal(ownershipPayload)
-		if err != nil {
-			log.Printf("Error marshaling room ownership transfer payload: %v", err)
-			continue
-		}
+			// Marshal the room payload
+			wsPayloadBytes, err = json.Marshal(roomPayload)
+			if err != nil {
+				log.Printf("Error marshaling room update payload: %v", err)
+				continue
+			}
 
-		// Get room members from repository
-		userRepo := repository.NewUserRepository(database.Session)
-		roomMembers, err := userRepo.GetRoomMembers(roomID)
-		if err != nil {
-			log.Printf("Error getting room members for ownership transfer: %v", err)
-			continue
-		}
+			// Get room members from repository
+			userRepo := repository.NewUserRepository(database.Session)
+			roomMembers, err := userRepo.GetRoomMembers(roomID)
+			if err != nil {
+				log.Printf("Error getting room members for voice join: %v", err)
+				continue
+			}
 
-		// Broadcast to all room members
-		for _, memberID := range roomMembers {
-			h.Broadcast(memberID, wsPayloadBytes)
-		}
+			// Broadcast to all room members
+			for _, memberID := range roomMembers {
+				h.Broadcast(memberID, wsPayloadBytes)
+			}
+		case "ROOM_OWNERSHIP_TRANSFER":
+			log.Printf("Broadcasting Room Ownership Transfer Event: Room=%s, Old Owner=%s, New Owner=%s", event.Data["room_id"], event.Data["old_owner"], event.Data["new_owner"])
 
-	case "MESSAGE_CREATE":
+			// Get room ID from event data
+			roomID, ok := event.Data["room_id"].(string)
+			if !ok {
+				log.Printf("Room ownership transfer event has no room_id")
+				continue
+			}
+
+			// Construct room ownership transfer payload
+			ownershipPayload := struct {
+				Op string      `json:"op"`
+				D  interface{} `json:"d"`
+			}{
+				Op: EventDispatch,
+				D: map[string]interface{}{
+					"type": "ROOM_OWNERSHIP_TRANSFER",
+					"data": map[string]interface{}{
+						"room_id":   roomID,
+						"old_owner": event.Data["old_owner"],
+						"new_owner": event.Data["new_owner"],
+						"timestamp": event.Data["timestamp"],
+					},
+				},
+			}
+
+			// Marshal the ownership transfer payload
+			wsPayloadBytes, err = json.Marshal(ownershipPayload)
+			if err != nil {
+				log.Printf("Error marshaling room ownership transfer payload: %v", err)
+				continue
+			}
+
+			// Get room members from repository
+			userRepo := repository.NewUserRepository(database.Session)
+			roomMembers, err := userRepo.GetRoomMembers(roomID)
+			if err != nil {
+				log.Printf("Error getting room members for ownership transfer: %v", err)
+				continue
+			}
+
+			// Broadcast to all room members
+			for _, memberID := range roomMembers {
+				h.Broadcast(memberID, wsPayloadBytes)
+			}
+
+		case "MESSAGE_CREATE":
 			log.Printf("Broadcasting Message Create Event: Room=%s, Sender=%s", event.Data["room_id"], event.SenderID)
 
 			// Get room ID from event data
