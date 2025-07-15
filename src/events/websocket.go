@@ -181,7 +181,7 @@ func (h *WebSocketHandler) handleIdentify(payload []byte) error {
 	Manager.AddConnection(userID, h)
 
 	// Optional: set user online
-	if err := h.userRepo.SetUserOnline(userID); err != nil {
+	if setOnlineErr := h.userRepo.SetUserOnline(userID); setOnlineErr != nil {
 		log.Printf("Failed to set user online: %v", err)
 	}
 
@@ -208,7 +208,7 @@ func (h *WebSocketHandler) handleIdentify(payload []byte) error {
 	// If user's status is not offline, broadcast presence update
 	// if details.Presence.Status != "offline" {
 	log.Printf("Broadcasting presence update for user %s", userID)
-	if err := Manager.BroadcastPresenceUpdate(userID, details.Presence.Status, details.Presence.CustomStatus, h.userRepo); err != nil {
+	if broadcastErr := Manager.BroadcastPresenceUpdate(userID, details.Presence.Status, details.Presence.CustomStatus, h.userRepo); broadcastErr != nil {
 		log.Printf("Failed to broadcast presence update: %v", err)
 	}
 	// }
@@ -251,6 +251,56 @@ func (h *WebSocketHandler) handleIdentify(payload []byte) error {
 		rooms = []repository.Room{}
 	}
 	log.Printf("[WebSocket:READY] Got %d rooms for user %s", len(rooms), userID)
+	
+	// Debug: Log each room with its type and space_id
+	for i, room := range rooms {
+		spaceIDStr := "nil"
+		if room.SpaceID != nil {
+			spaceIDStr = *room.SpaceID
+		}
+		log.Printf("[WebSocket:READY] Room %d: ID=%s, Type=%d, SpaceID=%s", i, room.ID, room.Type, spaceIDStr)
+	}
+
+	// Get user spaces
+	spaces, err := h.userRepo.GetUserSpaces(userID)
+	if err != nil {
+		log.Printf("Failed to get user spaces: %v", err)
+		spaces = []repository.Space{}
+	}
+	log.Printf("[WebSocket:READY] Got %d spaces for user %s", len(spaces), userID)
+
+	// Enhance spaces with members and roles data
+	enhancedSpaces := make([]map[string]interface{}, len(spaces))
+	for i, space := range spaces {
+		// Get members with roles for this space
+		members, err := h.userRepo.GetSpaceMembersWithRoles(space.ID)
+		if err != nil {
+			log.Printf("Failed to get members for space %s: %v", space.ID, err)
+			members = []repository.SpaceMember{}
+		}
+		log.Printf("[WebSocket:READY] Got %d members for space %s", len(members), space.ID)
+
+		// Get roles for this space
+		roles, err := h.userRepo.GetSpaceRoles(space.ID)
+		if err != nil {
+			log.Printf("Failed to get roles for space %s: %v", space.ID, err)
+			roles = []repository.SpaceRole{}
+		}
+		log.Printf("[WebSocket:READY] Got %d roles for space %s", len(roles), space.ID)
+
+		// Create enhanced space object with embedded members and roles
+		enhancedSpaces[i] = map[string]interface{}{
+			"id":           space.ID,
+			"name":         space.Name,
+			"name_acronym": space.NameAcronym,
+			"description":  space.Description,
+			"owner_id":     space.OwnerID,
+			"created_at":   space.CreatedAt,
+			"updated_at":   space.UpdatedAt,
+			"members":      members,
+			"roles":        roles,
+		}
+	}
 
 	// Add recipient IDs from group PMs
 	for _, room := range rooms {
@@ -283,6 +333,7 @@ func (h *WebSocketHandler) handleIdentify(payload []byte) error {
 			"relationships":         relationships,
 			"relationship_requests": relationshipRequests,
 			"rooms":                 rooms,
+			"spaces":                enhancedSpaces,
 			"unread_messages":       unreadMessages,
 		},
 	}
@@ -340,8 +391,8 @@ func (h *WebSocketHandler) handleMessage(payload []byte) error {
 		return fmt.Errorf("failed to decode message payload: %v", err)
 	}
 
-	log.Printf("Received message from %s in channel %s: %s",
-		h.userID, message.ChannelID, message.Content)
+	log.Printf("Received message from %s in room %s: %s",
+			h.userID, message.RoomID, message.Content)
 
 	return h.sendResponse(EventPayload{
 		Op: EventMessage,

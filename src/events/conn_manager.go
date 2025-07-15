@@ -132,3 +132,40 @@ for _, relatedUserID := range relatedUsers {
 
 	return nil
 }
+
+func (m *ConnectionManager) BroadcastSpaceCreate(spaceData map[string]interface{}, userRepo *repository.UserRepository) error {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	// Get space ID and owner ID from space data
+	spaceID, ok := spaceData["id"].(string)
+	if !ok {
+		return fmt.Errorf("space data has no id")
+	}
+
+	ownerID, ok := spaceData["owner_id"].(string)
+	if !ok {
+		return fmt.Errorf("space data has no owner_id")
+	}
+
+	log.Printf("Broadcasting space create event: Space=%s, Owner=%s", spaceID, ownerID)
+
+	// Create space create payload
+	payload := SpaceCreatePayload{
+		BasePayload: BasePayload{
+			Type: PayloadTypeSpaceCreate,
+		},
+		Space: spaceData,
+	}
+
+	// Send to the space owner's connections
+	if handlers, exists := m.connections[ownerID]; exists {
+		for handler := range handlers {
+			if err := handler.sendResponse(payload); err != nil {
+				log.Printf("Failed to send space create to owner %s: %v", ownerID, err)
+			}
+		}
+	}
+
+	return nil
+}

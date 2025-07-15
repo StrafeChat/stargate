@@ -9,6 +9,7 @@ const (
 	PayloadTypeMessage    PayloadType = "MESSAGE"
 	PayloadTypeReady      PayloadType = "READY"
 	PayloadTypePresenceUpdate PayloadType = "PRESENCE_UPDATE"
+	PayloadTypeSpaceCreate PayloadType = "SPACE_CREATE"
 )
 
 type BasePayload struct {
@@ -28,7 +29,7 @@ type HeartbeatPayload struct {
 
 type MessagePayload struct {
 	BasePayload
-	ChannelID   string   `json:"channel_id" msgpack:"channel_id"`
+	RoomID      string   `json:"room_id" msgpack:"room_id"`
 	Content     string   `json:"content" msgpack:"content"`
 	Attachments []string `json:"attachments,omitempty" msgpack:"attachments,omitempty"`
 }
@@ -51,4 +52,9 @@ type PingPayload struct {
 
 type PongPayload struct {
 	BasePayload
+}
+
+type SpaceCreatePayload struct {
+	BasePayload
+	Space interface{} `json:"space" msgpack:"space"`
 }
