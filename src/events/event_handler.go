@@ -120,7 +120,7 @@ func (h *EventHandler) Broadcast(userID string, eventData []byte) {
 func (h *EventHandler) StartEventListener() {
 	log.Println("Starting Redis pub/sub event listener")
 
-	pubsub := database.Rdb.Subscribe("RELATIONSHIP_EVENTS", "USER_EVENTS", "ROOM_EVENTS", "SPACE_EVENTS")
+	pubsub := database.Rdb.Subscribe("RELATIONSHIP_EVENTS", "USER_EVENTS", "ROOM_EVENTS", "SPACE_EVENTS", "VOICE_EVENTS")
 	defer pubsub.Close()
 
 	ch := pubsub.Channel()
@@ -743,11 +743,19 @@ func (h *EventHandler) StartEventListener() {
 			}
 			log.Printf("Broadcasting Room Positions Update Event: Updated by=%s", data["updated_by"])
 
+			// Get space ID from event data to get all space members
+			spaceID, ok := data["space_id"].(string)
+			if !ok {
+				log.Printf("Room positions update event has no space_id")
+				continue
+			}
+
 			// Construct room positions update payload
 			updateData := map[string]interface{}{
 				"room_positions": data["room_positions"],
 				"updated_by":     data["updated_by"],
 				"timestamp":      data["timestamp"],
+				"space_id":       spaceID,
 			}
 
 			roomPayload := struct {
@@ -761,71 +769,25 @@ func (h *EventHandler) StartEventListener() {
 				},
 			}
 
-			// Marshal the room positions payload
+			// Marshal the room payload
 			wsPayloadBytes, err = json.Marshal(roomPayload)
 			if err != nil {
-				log.Printf("Error marshaling room positions update payload: %v", err)
+				log.Printf("Error marshaling room update payload: %v", err)
 				continue
 			}
 
-			// Extract room positions to get affected room IDs and broadcast to space members
-			roomPositions, ok := data["room_positions"].([]interface{})
-			if !ok {
-				log.Printf("Room positions update event has invalid room_positions data")
-				continue
-			}
-
+			// Get space members from repository
 			userRepo := repository.NewUserRepository(database.Session)
-			notifiedUsers := make(map[string]bool) // Track users to avoid duplicate broadcasts
-			notifiedSpaces := make(map[string]bool) // Track spaces to avoid duplicate space queries
-
-			// Get all users who are members of the spaces containing the affected rooms
-			for _, positionData := range roomPositions {
-				if positionMap, ok := positionData.(map[string]interface{}); ok {
-					if roomID, ok := positionMap["room_id"].(string); ok {
-						// Get the space ID for this room
-						spaceID, err := userRepo.GetRoomSpaceID(roomID)
-						if err != nil {
-							log.Printf("Error getting space ID for room %s: %v", roomID, err)
-							continue
-						}
-
-						// Skip if room has no space (DM or group chat)
-						if spaceID == nil {
-							log.Printf("Room %s has no space, skipping space member broadcast", roomID)
-							continue
-						}
-
-						// Skip if we've already processed this space
-						if notifiedSpaces[*spaceID] {
-							continue
-						}
-						notifiedSpaces[*spaceID] = true
-
-						// Get all members of this space
-						spaceMembers, err := userRepo.GetSpaceMembers(*spaceID)
-						if err != nil {
-							log.Printf("Error getting space members for space %s: %v", *spaceID, err)
-							continue
-						}
-
-						log.Printf("Adding %d space members from space %s to notification list", len(spaceMembers), *spaceID)
-
-						// Add space members to notification list
-						for _, memberID := range spaceMembers {
-							notifiedUsers[memberID] = true
-						}
-					}
-				}
+			spaceMembers, err := userRepo.GetSpaceMembers(spaceID)
+			if err != nil {
+				log.Printf("Error getting space members for room positions update: %v", err)
+				continue
 			}
 
-			log.Printf("Broadcasting room positions update to %d users across %d spaces", len(notifiedUsers), len(notifiedSpaces))
-
-			// Broadcast to all affected users
-			for userID := range notifiedUsers {
-				h.Broadcast(userID, wsPayloadBytes)
+			// Broadcast to all space members
+			for _, memberID := range spaceMembers {
+				h.Broadcast(memberID, wsPayloadBytes)
 			}
-
 		case "ROOM_OWNERSHIP_TRANSFER":
 			data, ok := rawEvent["data"].(map[string]interface{})
 			if !ok {
@@ -867,9 +829,63 @@ func (h *EventHandler) StartEventListener() {
 
 			// Get room members from repository
 			userRepo := repository.NewUserRepository(database.Session)
-			roomMembers, roomMembersErr := userRepo.GetRoomMembers(roomID)
-			if roomMembersErr != nil {
-				log.Printf("Error getting room members for ownership transfer: %v", roomMembersErr)
+			roomMembers, err := userRepo.GetRoomMembers(roomID)
+			if err != nil {
+				log.Printf("Error getting room members for ownership transfer: %v", err)
+				continue
+			}
+
+			// Broadcast to all room members
+			for _, memberID := range roomMembers {
+				h.Broadcast(memberID, wsPayloadBytes)
+			}
+
+		case "VOICE_PARTICIPANT_JOIN", "VOICE_PARTICIPANT_LEAVE":
+			data, ok := rawEvent["data"].(map[string]interface{})
+			if !ok {
+				log.Printf("Voice participant event has no data")
+				continue
+			}
+			log.Printf("Broadcasting Voice Join/Leave Event: Room=%s, Participant=%s", data["room_id"], data["participant_id"])
+
+			// Get room ID from event data
+			roomID, ok := data["room_id"].(string)
+			if !ok {
+				log.Printf("Voice participant event has no room_id")
+				continue
+			}
+
+			// Construct voice participant payload
+			updateData := map[string]interface{}{
+				"room_id":        roomID,
+				"participant_id": data["participant_id"],
+				"timestamp":      data["timestamp"],
+				"event_type":     rawEvent["type"],
+			}
+
+			voicePayload := struct {
+				Op string      `json:"op"`
+				D  interface{} `json:"d"`
+			}{
+				Op: EventDispatch,
+				D: map[string]interface{}{
+					"type": rawEvent["type"],
+					"data": updateData,
+				},
+			}
+
+			// Marshal the voice payload
+			wsPayloadBytes, err = json.Marshal(voicePayload)
+			if err != nil {
+				log.Printf("Error marshaling voice participant payload: %v", err)
+				continue
+			}
+
+			// Get room members from repository
+			userRepo := repository.NewUserRepository(database.Session)
+			roomMembers, err := userRepo.GetRoomMembers(roomID)
+			if err != nil {
+				log.Printf("Error getting room members for voice event: %v", err)
 				continue
 			}
 
@@ -995,7 +1011,7 @@ func (h *EventHandler) StartEventListener() {
 					"data": map[string]interface{}{
 						"room_id":    roomID,
 						"user_id":    senderID,
-					"created_at": createdAt,
+						"created_at": createdAt,
 					},
 				},
 			}
