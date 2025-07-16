@@ -251,7 +251,7 @@ func (h *WebSocketHandler) handleIdentify(payload []byte) error {
 		rooms = []repository.Room{}
 	}
 	log.Printf("[WebSocket:READY] Got %d rooms for user %s", len(rooms), userID)
-	
+
 	// Debug: Log each room with its type and space_id
 	for i, room := range rooms {
 		spaceIDStr := "nil"
@@ -293,6 +293,8 @@ func (h *WebSocketHandler) handleIdentify(payload []byte) error {
 			"id":           space.ID,
 			"name":         space.Name,
 			"name_acronym": space.NameAcronym,
+			"icon":         space.Icon,
+			"banner":       space.Banner,
 			"description":  space.Description,
 			"owner_id":     space.OwnerID,
 			"created_at":   space.CreatedAt,
@@ -392,7 +394,7 @@ func (h *WebSocketHandler) handleMessage(payload []byte) error {
 	}
 
 	log.Printf("Received message from %s in room %s: %s",
-			h.userID, message.RoomID, message.Content)
+		h.userID, message.RoomID, message.Content)
 
 	return h.sendResponse(EventPayload{
 		Op: EventMessage,

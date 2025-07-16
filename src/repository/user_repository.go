@@ -658,6 +658,8 @@ type Space struct {
 	ID          string    `json:"id"`
 	Name        string    `json:"name"`
 	NameAcronym string    `json:"name_acronym"`
+	Icon        *string   `json:"icon,omitempty"`
+	Banner      *string   `json:"banner,omitempty"`
 	Description *string   `json:"description,omitempty"`
 	OwnerID     string    `json:"owner_id"`
 	CreatedAt   time.Time `json:"created_at"`
@@ -700,9 +702,9 @@ func (r *UserRepository) GetUserSpaces(userID string) ([]Space, error) {
 		log.Printf("[GetUserSpaces] Fetching details for space ID %d", id)
 
 		var space Space
-		spaceDetailsQuery := "SELECT id, name, name_acronym, description, owner_id, created_at, updated_at FROM spaces WHERE id = ?"
+		spaceDetailsQuery := "SELECT id, name, name_acronym, icon, banner, description, owner_id, created_at, updated_at FROM spaces WHERE id = ?"
 		err := r.session.Query(spaceDetailsQuery, id).Scan(
-			&space.ID, &space.Name, &space.NameAcronym, &space.Description, &space.OwnerID, &space.CreatedAt, &space.UpdatedAt,
+			&space.ID, &space.Name, &space.NameAcronym, &space.Icon, &space.Banner, &space.Description, &space.OwnerID, &space.CreatedAt, &space.UpdatedAt,
 		)
 		if err != nil {
 			log.Printf("[GetUserSpaces] Error fetching space details for space ID %d: %v", id, err)
@@ -778,17 +780,17 @@ func (r *UserRepository) GetSpaceMembers(spaceID string) ([]string, error) {
 
 // SpaceMember represents a space member with roles and user details
 type SpaceMember struct {
-	SpaceID     string      `json:"space_id"`
-	UserID      string      `json:"user_id"`
-	Nick        *string     `json:"nick,omitempty"`
-	Avatar      *string     `json:"avatar,omitempty"`
-	Roles       []string    `json:"roles"`
-	JoinedAt    time.Time   `json:"joined_at"`
-	Deaf        bool        `json:"deaf"`
-	Mute        bool        `json:"mute"`
-	Flags       int         `json:"flags"`
-	Pending     bool        `json:"pending"`
-	User        UserDetails `json:"user"`
+	SpaceID  string      `json:"space_id"`
+	UserID   string      `json:"user_id"`
+	Nick     *string     `json:"nick,omitempty"`
+	Avatar   *string     `json:"avatar,omitempty"`
+	Roles    []string    `json:"roles"`
+	JoinedAt time.Time   `json:"joined_at"`
+	Deaf     bool        `json:"deaf"`
+	Mute     bool        `json:"mute"`
+	Flags    int         `json:"flags"`
+	Pending  bool        `json:"pending"`
+	User     UserDetails `json:"user"`
 }
 
 // SpaceRole represents a space role
@@ -829,7 +831,7 @@ func (r *UserRepository) GetSpaceMembersWithRoles(spaceID string) ([]SpaceMember
 	var spaceIDResult int64
 	for iter.Scan(&spaceIDResult, &member.UserID, &member.Nick, &member.Avatar, &member.JoinedAt, &member.Deaf, &member.Mute, &member.Flags, &member.Pending) {
 		member.SpaceID = strconv.FormatInt(spaceIDResult, 10)
-		
+
 		// Fetch roles from the new junction table
 		memberRoles, err := r.GetMemberRolesFromJunctionTable(spaceIDInt, member.UserID)
 		if err != nil {
@@ -839,7 +841,7 @@ func (r *UserRepository) GetSpaceMembersWithRoles(spaceID string) ([]SpaceMember
 		} else {
 			member.Roles = memberRoles
 		}
-		
+
 		// Fetch user details for this member
 		userDetails, err := r.GetUserDetailsWithoutEmail(member.UserID)
 		if err != nil {
@@ -849,7 +851,7 @@ func (r *UserRepository) GetSpaceMembersWithRoles(spaceID string) ([]SpaceMember
 		} else {
 			member.User = userDetails
 		}
-		
+
 		members = append(members, member)
 	}
 
