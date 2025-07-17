@@ -404,9 +404,9 @@ func (h *EventHandler) StartEventListener() {
 			}{
 				Op: EventDispatch,
 				D: map[string]interface{}{
-					"type": "spaceUpdate",
+					"type":     "spaceUpdate",
 					"space_id": spaceID,
-					"data": data,
+					"data":     data,
 				},
 			}
 
@@ -436,7 +436,7 @@ func (h *EventHandler) StartEventListener() {
 				log.Printf("Room create event has no data")
 				continue
 			}
-			log.Printf("Broadcasting Room Create Event: Room=%s, Creator=%s", data["room_id"], senderID)
+			log.Printf("Broadcasting Room Create Event: Room=%s, Creator=%s", data["id"], senderID)
 
 			// Construct room creation payload
 			roomPayload := struct {
@@ -452,10 +452,12 @@ func (h *EventHandler) StartEventListener() {
 						"type":            data["type"],
 						"recipients":      data["recipients"],
 						"creator":         data["creator"],
+						"parent_id":       data["parent_id"],
 						"last_message_id": data["last_message_id"],
 						"icon":            data["icon"],
 						"created_at":      data["created_at"],
 						"updated_at":      data["updated_at"],
+						"space_id":        data["space_id"],
 					},
 				},
 			}
@@ -467,18 +469,24 @@ func (h *EventHandler) StartEventListener() {
 				continue
 			}
 
-			// Get recipients from event data
-			recipients, ok := data["recipients"].([]interface{})
+			// Get space_id from event to broadcast to all space members
+			spaceID, ok := rawEvent["space_id"].(string)
 			if !ok {
-				log.Printf("Room event has invalid recipients data")
+				log.Printf("Room create event has no space_id")
 				continue
 			}
 
-			// Broadcast to all recipients
-			for _, recipient := range recipients {
-				if recipientID, ok := recipient.(string); ok {
-					h.Broadcast(recipientID, wsPayloadBytes)
-				}
+			// Get space members to broadcast the room creation
+			userRepo := repository.NewUserRepository(database.Session)
+			spaceMembers, spaceMembersErr := userRepo.GetSpaceMembers(spaceID)
+			if spaceMembersErr != nil {
+				log.Printf("Error getting space members for room creation: %v", spaceMembersErr)
+				continue
+			}
+
+			// Broadcast to all space members
+			for _, memberID := range spaceMembers {
+				h.Broadcast(memberID, wsPayloadBytes)
 			}
 
 		case "ROOM_DELETE":
