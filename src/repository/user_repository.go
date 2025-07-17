@@ -40,6 +40,8 @@ type UserDetails struct {
 	System        bool         `json:"system"`
 	Bio           string       `json:"bio"`
 	AboutMe       string       `json:"about_me"`
+	CreatedAt     time.Time    `json:"created_at"`
+	UpdatedAt     time.Time    `json:"updated_at"`
 	Flags         int          `json:"flags"`
 	Presence      UserPresence `json:"presence"`
 }
@@ -96,8 +98,9 @@ func (r *UserRepository) GetUserDetailsWithoutEmail(userID string) (UserDetails,
 	var bio string
 	var aboutMe string
 	var flags int
-	if err := r.session.Query("SELECT id, username, discriminator, display_name, avatar, banner, bot, system, bio, about_me, flags, presence FROM users WHERE id = ?",
-		userID).Scan(&details.ID, &details.Username, &details.Discriminator, &displayName, &avatar, &banner, &bot, &system, &bio, &aboutMe, &flags, &presence); err != nil {
+
+	if err := r.session.Query("SELECT id, username, discriminator, display_name, avatar, banner, bot, system, bio, about_me, flags, created_at, updated_at, presence FROM users WHERE id = ?",
+		userID).Scan(&details.ID, &details.Username, &details.Discriminator, &displayName, &avatar, &banner, &bot, &system, &bio, &aboutMe, &flags, &details.CreatedAt, &details.UpdatedAt, &presence); err != nil {
 		log.Printf("Error fetching user details: %v", err)
 		if err == gocql.ErrNotFound {
 			return UserDetails{}, ErrUserNotFound
@@ -142,8 +145,9 @@ func (r *UserRepository) GetUserDetails(userID string) (UserDetails, error) {
 	var bio string
 	var aboutMe string
 	var flags int
-	if err := r.session.Query("SELECT id, username, discriminator, display_name, email, avatar, banner, bot, system, bio, about_me, flags, presence FROM users WHERE id = ?",
-		userID).Scan(&details.ID, &details.Username, &details.Discriminator, &displayName, &email, &avatar, &banner, &bot, &system, &bio, &aboutMe, &flags, &presence); err != nil {
+
+	if err := r.session.Query("SELECT id, username, discriminator, display_name, email, avatar, banner, bot, system, bio, about_me, flags, created_at, updated_at, presence FROM users WHERE id = ?",
+		userID).Scan(&details.ID, &details.Username, &details.Discriminator, &displayName, &email, &avatar, &banner, &bot, &system, &bio, &aboutMe, &flags, &details.CreatedAt, &details.UpdatedAt, &presence); err != nil {
 		log.Printf("Error fetching user details: %v", err)
 		if err == gocql.ErrNotFound {
 			return UserDetails{}, ErrUserNotFound
@@ -164,6 +168,7 @@ func (r *UserRepository) GetUserDetails(userID string) (UserDetails, error) {
 	details.Bio = bio
 	details.AboutMe = aboutMe
 	details.Flags = flags
+
 	details.Presence = UserPresence{
 		Status:       status,
 		CustomStatus: presence.CustomStatus,
