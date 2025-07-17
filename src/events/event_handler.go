@@ -387,6 +387,49 @@ func (h *EventHandler) StartEventListener() {
 			// Broadcast to the space creator
 			h.Broadcast(senderID, wsPayloadBytes)
 
+		case "SPACE_UPDATED":
+			data, ok := rawEvent["data"].(map[string]interface{})
+			if !ok {
+				log.Printf("Space update event has no data")
+				continue
+			}
+			// Extract space ID from the top-level event, not from data
+			spaceID, _ := rawEvent["space_id"].(string)
+			log.Printf("Broadcasting Space Update Event: Space=%s, Updated by=%s", spaceID, senderID)
+
+			// Construct space update payload
+			spacePayload := struct {
+				Op string      `json:"op"`
+				D  interface{} `json:"d"`
+			}{
+				Op: EventDispatch,
+				D: map[string]interface{}{
+					"type": "spaceUpdate",
+					"space_id": spaceID,
+					"data": data,
+				},
+			}
+
+			// Marshal the space payload
+			wsPayloadBytes, err = json.Marshal(spacePayload)
+			if err != nil {
+				log.Printf("Error marshaling space update payload: %v", err)
+				continue
+			}
+
+			// Get space members to broadcast the update
+			userRepo := repository.NewUserRepository(database.Session)
+			spaceMembers, spaceMembersErr := userRepo.GetSpaceMembers(spaceID)
+			if spaceMembersErr != nil {
+				log.Printf("Error getting space members for update: %v", spaceMembersErr)
+				continue
+			}
+
+			// Broadcast to all space members
+			for _, memberID := range spaceMembers {
+				h.Broadcast(memberID, wsPayloadBytes)
+			}
+
 		case "ROOM_CREATE":
 			data, ok := rawEvent["data"].(map[string]interface{})
 			if !ok {
