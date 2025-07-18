@@ -3,6 +3,7 @@ package events
 import (
 	"encoding/json"
 	"log"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -251,9 +252,9 @@ func (h *EventHandler) StartEventListener() {
 				continue
 			}
 
-			// Get room members with SEND_MESSAGES permission from repository
+			// Get room members with VIEW_CHANNELS permission from repository
 			userRepo := repository.NewUserRepository(database.Session)
-			roomMembers, roomMembersErr := userRepo.GetRoomMembersWithPermissions(roomID, "SEND_MESSAGES")
+			roomMembers, roomMembersErr := userRepo.GetRoomMembersWithPermissions(roomID, "VIEW_CHANNELS")
 			if roomMembersErr != nil {
 				log.Printf("Error getting room members with permissions: %v", roomMembersErr)
 				continue
@@ -307,9 +308,9 @@ func (h *EventHandler) StartEventListener() {
 				continue
 			}
 
-			// Get room members with SEND_MESSAGES permission from repository
+			// Get room members with VIEW_CHANNELS permission from repository
 			userRepo := repository.NewUserRepository(database.Session)
-			roomMembers, roomMembersErr := userRepo.GetRoomMembersWithPermissions(roomID, "SEND_MESSAGES")
+			roomMembers, roomMembersErr := userRepo.GetRoomMembersWithPermissions(roomID, "VIEW_CHANNELS")
 			if roomMembersErr != nil {
 				log.Printf("Error getting room members with permissions: %v", roomMembersErr)
 				continue
@@ -773,17 +774,45 @@ func (h *EventHandler) StartEventListener() {
 				continue
 			}
 
-			// Get room members from repository
+			// Get room type and space ID to determine broadcast strategy
 			userRepo := repository.NewUserRepository(database.Session)
-			roomMembers, roomMembersErr := userRepo.GetRoomMembers(roomID)
-			if roomMembersErr != nil {
-				log.Printf("Error getting room members for update: %v", err)
+
+			// Get room details to check type
+			var roomType int
+			var spaceID *int64
+			var recipients []string
+			roomQuery := "SELECT type, space_id, recipients FROM rooms WHERE id = ?"
+			if err := userRepo.GetSession().Query(roomQuery, roomID).Scan(&roomType, &spaceID, &recipients); err != nil {
+				log.Printf("Error getting room details for update: %v", err)
 				continue
 			}
 
-			// Broadcast to all room members
-			for _, memberID := range roomMembers {
-				h.Broadcast(memberID, wsPayloadBytes)
+			// For TextRooms (type 2) and VoiceRooms (type 3), broadcast to space members
+			// For PMs (type 0) and Group PMs (type 1), broadcast to room members
+			if roomType == 2 || roomType == 3 {
+				// TextRoom or VoiceRoom - broadcast to space members
+				if spaceID == nil {
+					log.Printf("TextRoom/VoiceRoom %s has no space_id, skipping broadcast", roomID)
+					continue
+				}
+
+				spaceIDStr := strconv.FormatInt(*spaceID, 10)
+				spaceMembers, err := userRepo.GetSpaceMembers(spaceIDStr)
+				if err != nil {
+					log.Printf("Error getting space members for room update: %v", err)
+					continue
+				}
+
+				log.Printf("Broadcasting room update to %d space members for TextRoom/VoiceRoom %s", len(spaceMembers), roomID)
+				for _, memberID := range spaceMembers {
+					h.Broadcast(memberID, wsPayloadBytes)
+				}
+			} else {
+				// PM or Group PM - broadcast to room members
+				log.Printf("Broadcasting room update to %d room members for PM/GroupPM %s", len(recipients), roomID)
+				for _, memberID := range recipients {
+					h.Broadcast(memberID, wsPayloadBytes)
+				}
 			}
 
 		case "ROOM_POSITIONS_UPDATE":
@@ -996,9 +1025,9 @@ func (h *EventHandler) StartEventListener() {
 				continue
 			}
 
-			// Get room members with SEND_MESSAGES permission from repository
+			// Get room members with VIEW_CHANNELS permission from repository
 			userRepo := repository.NewUserRepository(database.Session)
-			roomMembers, roomMembersErr := userRepo.GetRoomMembersWithPermissions(roomID, "SEND_MESSAGES")
+			roomMembers, roomMembersErr := userRepo.GetRoomMembersWithPermissions(roomID, "VIEW_CHANNELS")
 			if roomMembersErr != nil {
 				log.Printf("Error getting room members with permissions: %v", roomMembersErr)
 				continue
@@ -1074,9 +1103,9 @@ func (h *EventHandler) StartEventListener() {
 				continue
 			}
 
-			// Get room members with SEND_MESSAGES permission from repository
+			// Get room members with VIEW_CHANNELS permission from repository
 			userRepo := repository.NewUserRepository(database.Session)
-			roomMembers, err := userRepo.GetRoomMembersWithPermissions(roomID, "SEND_MESSAGES")
+			roomMembers, err := userRepo.GetRoomMembersWithPermissions(roomID, "VIEW_CHANNELS")
 			if err != nil {
 				log.Printf("Error getting room members with permissions: %v", err)
 				continue
