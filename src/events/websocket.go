@@ -77,7 +77,7 @@ func NewWebSocketHandler(conn *websocket.Conn, r *http.Request) *WebSocketHandle
 	return &WebSocketHandler{
 		conn:            conn,
 		encoder:         encoder,
-		userRepo:        repository.NewUserRepository(database.GetSession()),
+		userRepo:        repository.GetUserRepository(database.GetSession()),
 		notificationSvc: services.NewNotificationService(nil),
 		format:          selectedFormat,
 		connectionID:    connectionID,
@@ -252,13 +252,40 @@ func (h *WebSocketHandler) handleIdentify(payload []byte) error {
 	}
 	log.Printf("[WebSocket:READY] Got %d rooms for user %s", len(rooms), userID)
 
-	// Debug: Log each room with its type and space_id
+	// Enhance rooms with permission overrides for space rooms
+	enhancedRooms := make([]map[string]interface{}, len(rooms))
 	for i, room := range rooms {
 		spaceIDStr := "nil"
 		if room.SpaceID != nil {
 			spaceIDStr = *room.SpaceID
 		}
 		log.Printf("[WebSocket:READY] Room %d: ID=%s, Type=%d, SpaceID=%s", i, room.ID, room.Type, spaceIDStr)
+
+		// Convert room to map
+		roomData := map[string]interface{}{
+			"id":         room.ID,
+			"name":       room.Name,
+			"type":       room.Type,
+			"recipients": room.Recipients,
+			"creator":    room.Creator,
+			"parent_id":  room.ParentID,
+			"space_id":   room.SpaceID,
+			"created_at": room.CreatedAt,
+			"updated_at": room.UpdatedAt,
+		}
+
+		// Add permission overrides for space rooms (types 2, 3, 4)
+		if room.Type == 2 || room.Type == 3 || room.Type == 4 {
+			permissionOverrides, err := h.userRepo.GetRoomPermissionOverrides(room.ID, userID)
+			if err != nil {
+				log.Printf("[WebSocket:READY] Failed to get permission overrides for room %s: %v", room.ID, err)
+			} else if permissionOverrides != nil {
+				roomData["permission_overrides"] = permissionOverrides
+				log.Printf("[WebSocket:READY] Added permission overrides to room %s", room.ID)
+			}
+		}
+
+		enhancedRooms[i] = roomData
 	}
 
 	// Get user spaces
@@ -334,7 +361,7 @@ func (h *WebSocketHandler) handleIdentify(payload []byte) error {
 			"users":                 relatedUsers,
 			"relationships":         relationships,
 			"relationship_requests": relationshipRequests,
-			"rooms":                 rooms,
+			"rooms":                 enhancedRooms,
 			"spaces":                enhancedSpaces,
 			"unread_messages":       unreadMessages,
 		},

@@ -109,26 +109,29 @@ func (m *ConnectionManager) BroadcastPresenceUpdate(userID string, status string
 		CustomStatus: customStatus,
 	}
 
-// First send to the current user's connections
-if handlers, exists := m.connections[userID]; exists {
-    for handler := range handlers {
-        if err := handler.sendResponse(payload); err != nil {
-            log.Printf("Failed to send presence update to user %s: %v", userID, err)
-        }
-    }
-}
+// Create a list of all users to broadcast to (including the current user)
+	allUsers := append([]string{userID}, relatedUsers...)
 
-// Then send to related users' connections
-for _, relatedUserID := range relatedUsers {
-    if handlers, exists := m.connections[relatedUserID]; exists {
-        for handler := range handlers {
-            fmt.Printf("Broadcasting presence update to user %s\n", relatedUserID)
-            if err := handler.sendResponse(payload); err != nil {
-                log.Printf("Failed to send presence update to user %s: %v", relatedUserID, err)
-            }
-        }
-    }
-}
+	// Use goroutines for concurrent broadcasting
+	var wg sync.WaitGroup
+	for _, targetUserID := range allUsers {
+		if handlers, exists := m.connections[targetUserID]; exists {
+			for handler := range handlers {
+				wg.Add(1)
+				go func(h *WebSocketHandler, uid string) {
+					defer wg.Done()
+					if err := h.sendResponse(payload); err != nil {
+						log.Printf("Failed to send presence update to user %s: %v", uid, err)
+					} else {
+						log.Printf("Successfully sent presence update to user %s", uid)
+					}
+				}(handler, targetUserID)
+			}
+		}
+	}
+
+	// Wait for all broadcasts to complete
+	wg.Wait()
 
 	return nil
 }

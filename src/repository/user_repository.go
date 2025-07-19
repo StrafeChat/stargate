@@ -5,8 +5,10 @@ import (
 	"fmt"
 	"log"
 	"strconv"
+	"sync"
 	"time"
 
+	"github.com/StrafeChat/stargate/src/utils"
 	"github.com/gocql/gocql"
 )
 
@@ -48,6 +50,22 @@ type UserDetails struct {
 
 type UserRepository struct {
 	session *gocql.Session
+}
+
+// Global repository instance pool to avoid repeated allocations
+var (
+	globalUserRepo *UserRepository
+	repoOnce       sync.Once
+)
+
+// GetUserRepository returns a singleton UserRepository instance for better performance
+func GetUserRepository(session *gocql.Session) *UserRepository {
+	repoOnce.Do(func() {
+		globalUserRepo = &UserRepository{
+			session: session,
+		}
+	})
+	return globalUserRepo
 }
 
 func NewUserRepository(session *gocql.Session) *UserRepository {
@@ -432,6 +450,8 @@ func (r *UserRepository) GetUserRooms(userID string) ([]Room, error) {
 		return nil, ErrDatabaseNotInitialized
 	}
 
+	log.Printf("[GetUserRooms] Starting GetUserRooms for user %s", userID)
+
 	log.Printf("[GetUserRooms] Getting rooms for user: %s", userID)
 
 	// First get all room IDs for this user from room_recipients_by_user (DMs and group chats)
@@ -489,7 +509,7 @@ func (r *UserRepository) GetUserRooms(userID string) ([]Room, error) {
 
 	log.Printf("[GetUserRooms] Found %d total room IDs for user %s (including space rooms): %v", len(roomIDs), userID, roomIDs)
 
-	// Now get the full room data for each room ID
+	// Now get the full room data for each room ID and filter by VIEW_ROOM permission
 	rooms := make([]Room, 0, len(roomIDs))
 	for _, id := range roomIDs {
 		var room Room
@@ -503,6 +523,11 @@ func (r *UserRepository) GetUserRooms(userID string) ([]Room, error) {
 		roomQuery := "SELECT id, creator, recipients, type, space_id, parent_id, position, name, topic, icon, last_message_id, created_at, updated_at FROM rooms WHERE id = ?"
 		if err := r.session.Query(roomQuery, id).Scan(&room.ID, &creator, &recipients, &room.Type, &spaceID, &parentID, &position, &name, &topic, &icon, &lastMessageId, &createdAt, &updatedAt); err != nil {
 			log.Printf("[GetUserRooms] Error fetching room details for room ID %s: %v", id, err)
+			continue
+		}
+
+		// For space rooms (types 2, 3, 4), check VIEW_ROOM permission
+		if !r.hasRoomViewPermission(room.Type, id, userID) {
 			continue
 		}
 
@@ -531,6 +556,100 @@ func (r *UserRepository) GetUserRooms(userID string) ([]Room, error) {
 
 	log.Printf("[GetUserRooms] Returning %d rooms for user %s", len(rooms), userID)
 	return rooms, nil
+}
+
+// hasRoomViewPermission checks if a user has VIEW_ROOM permission for a room
+// This respects room overrides first, then falls back to space permissions
+func (r *UserRepository) hasRoomViewPermission(roomType int, roomID, userID string) bool {
+	// For PM (0) and Group PM (1), always allow if user is recipient (handled elsewhere)
+	if roomType == 0 || roomType == 1 {
+		return true
+	}
+
+	// For space rooms (types 2, 3, 4), check VIEW_ROOM permission
+	if roomType == 2 || roomType == 3 || roomType == 4 {
+		log.Printf("[hasRoomViewPermission] Checking VIEW_ROOM permission for user %s in room %s", userID, roomID)
+
+		// Get room's space_id
+		var spaceID *int64
+		roomQuery := "SELECT space_id FROM rooms WHERE id = ?"
+		if err := r.session.Query(roomQuery, roomID).Scan(&spaceID); err != nil {
+			log.Printf("[hasRoomViewPermission] Error fetching room space_id: %v", err)
+			return false
+		}
+
+		if spaceID == nil {
+			log.Printf("[hasRoomViewPermission] Space room %s has no spaceID", roomID)
+			return false
+		}
+
+		spaceIDStr := strconv.FormatInt(*spaceID, 10)
+
+		// First check if user is space owner - space owners have all permissions
+		isOwner, err := r.IsSpaceOwner(spaceIDStr, userID)
+		if err != nil {
+			log.Printf("[hasRoomViewPermission] Error checking space ownership: %v", err)
+			return false
+		}
+		if isOwner {
+			log.Printf("[hasRoomViewPermission] User %s is space owner, granting VIEW_ROOM permission", userID)
+			return true
+		}
+
+		// Check member-specific room overrides first
+		var memberGranted, memberDenied int64
+		memberQuery := "SELECT permissions, denied FROM room_member_permissions WHERE room_id = ? AND user_id = ?"
+		if err := r.session.Query(memberQuery, roomID, userID).Scan(&memberGranted, &memberDenied); err == nil {
+			// Check if VIEW_ROOM permission is explicitly denied
+			permBit := r.getPermissionBit(utils.VIEW_ROOM)
+			if permBit != 0 && (memberDenied&int64(permBit)) != 0 {
+				log.Printf("[hasRoomViewPermission] VIEW_ROOM explicitly denied for user %s", userID)
+				return false
+			}
+			// Check if VIEW_ROOM permission is explicitly granted
+			if permBit != 0 && (memberGranted&int64(permBit)) != 0 {
+				log.Printf("[hasRoomViewPermission] VIEW_ROOM explicitly granted for user %s", userID)
+				return true
+			}
+		}
+
+		// Get user's roles in the space
+		userRoles, err := r.GetMemberRolesFromJunctionTable(*spaceID, userID)
+		if err != nil {
+			log.Printf("[hasRoomViewPermission] Error getting user roles: %v", err)
+			return false
+		}
+
+		// Check role-specific room overrides
+		for _, roleID := range userRoles {
+			var roleGranted, roleDenied int64
+			roleQuery := "SELECT permissions, denied FROM room_role_permissions WHERE room_id = ? AND role_id = ?"
+			if err := r.session.Query(roleQuery, roomID, roleID).Scan(&roleGranted, &roleDenied); err == nil {
+				// Check if VIEW_ROOM permission is explicitly denied
+				permBit := r.getPermissionBit(utils.VIEW_ROOM)
+				if permBit != 0 && (roleDenied&int64(permBit)) != 0 {
+					log.Printf("[hasRoomViewPermission] VIEW_ROOM explicitly denied for role %s", roleID)
+					return false
+				}
+				// Check if VIEW_ROOM permission is explicitly granted
+				if permBit != 0 && (roleGranted&int64(permBit)) != 0 {
+					log.Printf("[hasRoomViewPermission] VIEW_ROOM explicitly granted for role %s", roleID)
+					return true
+				}
+			}
+		}
+
+		// Fall back to space VIEW_ROOMS permission after checking room overrides
+		log.Printf("[hasRoomViewPermission] No room overrides found, falling back to space VIEW_ROOMS permission")
+		hasSpacePermission, err := r.CheckSpaceMemberPermission(spaceIDStr, userID, utils.VIEW_ROOMS)
+		if err != nil {
+			log.Printf("[hasRoomViewPermission] Error checking space VIEW_ROOMS permission: %v", err)
+			return false
+		}
+		log.Printf("[hasRoomViewPermission] Space VIEW_ROOMS permission check result: %t", hasSpacePermission)
+		return hasSpacePermission
+	}
+	return true
 }
 
 func (r *UserRepository) GetRoomMembers(roomID string) ([]string, error) {
@@ -610,12 +729,50 @@ func (r *UserRepository) GetRoomMembersWithPermissions(roomID string, requiredPe
 }
 
 // CheckSpaceMemberPermission checks if a user has a specific permission in a space
+// IsSpaceOwner checks if a user is the owner of a space
+func (r *UserRepository) IsSpaceOwner(spaceID, userID string) (bool, error) {
+	if r.session == nil {
+		return false, ErrDatabaseNotInitialized
+	}
+
+	log.Printf("[IsSpaceOwner] Checking if user %s is owner of space %s", userID, spaceID)
+
+	// Convert spaceID to int64
+	spaceIDInt, err := strconv.ParseInt(spaceID, 10, 64)
+	if err != nil {
+		return false, fmt.Errorf("invalid space ID: %v", err)
+	}
+
+	// Get space owner ID
+	var ownerID string
+	query := "SELECT owner_id FROM spaces WHERE id = ?"
+	if err := r.session.Query(query, spaceIDInt).Scan(&ownerID); err != nil {
+		log.Printf("[IsSpaceOwner] Error fetching owner for space %s: %v", spaceID, err)
+		return false, err
+	}
+
+	isOwner := ownerID == userID
+	log.Printf("[IsSpaceOwner] User %s is owner of space %s: %t", userID, spaceID, isOwner)
+	return isOwner, nil
+}
+
 func (r *UserRepository) CheckSpaceMemberPermission(spaceID, userID, permission string) (bool, error) {
 	if r.session == nil {
 		return false, ErrDatabaseNotInitialized
 	}
 
 	log.Printf("[CheckSpaceMemberPermission] Checking permission %s for user %s in space %s", permission, userID, spaceID)
+
+	// First check if user is the space owner - owners have all permissions
+	isOwner, err := r.IsSpaceOwner(spaceID, userID)
+	if err != nil {
+		log.Printf("[CheckSpaceMemberPermission] Error checking space ownership: %v", err)
+		return false, err
+	}
+	if isOwner {
+		log.Printf("[CheckSpaceMemberPermission] User %s is space owner, granting permission %s", userID, permission)
+		return true, nil
+	}
 
 	// Convert spaceID to int64
 	spaceIDInt, err := strconv.ParseInt(spaceID, 10, 64)
@@ -637,13 +794,16 @@ func (r *UserRepository) CheckSpaceMemberPermission(spaceID, userID, permission 
 
 	// Check if any of the user's roles have the required permission
 	for _, roleID := range userRoles {
-		// Get role permissions
-		var permissions []string
+		// Get role permissions bitmap
+		var permissionsBitmap int64
 		roleQuery := "SELECT permissions FROM space_roles WHERE space_id = ? AND role_id = ?"
-		if err := r.session.Query(roleQuery, spaceIDInt, roleID).Scan(&permissions); err != nil {
+		if err := r.session.Query(roleQuery, spaceIDInt, roleID).Scan(&permissionsBitmap); err != nil {
 			log.Printf("[CheckSpaceMemberPermission] Error getting role permissions for role %s: %v", roleID, err)
 			continue
 		}
+
+		// Convert bitmap to permissions array
+		permissions := utils.BitfieldToPermissions(utils.PermissionValue(permissionsBitmap))
 
 		// Check if the required permission is in the role's permissions
 		for _, perm := range permissions {
@@ -810,6 +970,8 @@ type SpaceRole struct {
 	Hoist       bool      `json:"hoist"`
 	CreatedAt   time.Time `json:"created_at"`
 	UpdatedAt   time.Time `json:"updated_at"`
+	// Internal field for scanning from database
+	PermissionsBitmap int64 `json:"-"`
 }
 
 // GetSpaceMembersWithRoles retrieves all members of a specific space with their roles and user details
@@ -891,8 +1053,12 @@ func (r *UserRepository) GetSpaceRoles(spaceID string) ([]SpaceRole, error) {
 
 	var role SpaceRole
 	var spaceIDResult int64
-	for iter.Scan(&spaceIDResult, &role.RoleID, &role.Name, &role.Color, &role.Permissions, &role.Position, &role.Mentionable, &role.Hoist, &role.CreatedAt, &role.UpdatedAt) {
+	for iter.Scan(&spaceIDResult, &role.RoleID, &role.Name, &role.Color, &role.PermissionsBitmap, &role.Position, &role.Mentionable, &role.Hoist, &role.CreatedAt, &role.UpdatedAt) {
 		role.SpaceID = strconv.FormatInt(spaceIDResult, 10)
+
+		// Convert int64 permissions bitfield to string array
+		role.Permissions = utils.BitfieldToPermissions(utils.PermissionValue(role.PermissionsBitmap))
+
 		roles = append(roles, role)
 	}
 
@@ -942,6 +1108,261 @@ func (r *UserRepository) GetMemberRolesFromJunctionTable(spaceID int64, userID s
 
 	log.Printf("[GetMemberRolesFromJunctionTable] Found %d roles for user %s in space %d: %v", len(roleIDs), userID, spaceID, roleIDs)
 	return roleIDs, nil
+}
+
+// CheckRoomPermission checks if a user has a specific permission in a room
+// This considers room overrides, space ownership, and space permissions
+func (r *UserRepository) CheckRoomPermission(roomID, userID, permission string) (bool, error) {
+	if r.session == nil {
+		return false, ErrDatabaseNotInitialized
+	}
+
+	log.Printf("[CheckRoomPermission] Checking permission %s for user %s in room %s", permission, userID, roomID)
+
+	// Get room details
+	var roomType int
+	var spaceID *int64
+	roomQuery := "SELECT type, space_id FROM rooms WHERE id = ?"
+	if err := r.session.Query(roomQuery, roomID).Scan(&roomType, &spaceID); err != nil {
+		log.Printf("[CheckRoomPermission] Error fetching room details: %v", err)
+		return false, err
+	}
+
+	log.Printf("[CheckRoomPermission] Room %s has type %d and spaceID %v", roomID, roomType, spaceID)
+
+	// For PM (0) and Group PM (1), users always have access if they're recipients
+	if roomType == 0 || roomType == 1 {
+		var recipients []string
+		recipientsQuery := "SELECT recipients FROM rooms WHERE id = ?"
+		if err := r.session.Query(recipientsQuery, roomID).Scan(&recipients); err != nil {
+			return false, err
+		}
+		for _, recipient := range recipients {
+			if recipient == userID {
+				log.Printf("[CheckRoomPermission] User %s is recipient of PM/Group PM room %s", userID, roomID)
+				return true, nil
+			}
+		}
+		log.Printf("[CheckRoomPermission] User %s is not recipient of PM/Group PM room %s", userID, roomID)
+		return false, nil
+	}
+
+	// For space rooms, check space permissions and room overrides
+	if spaceID == nil {
+		log.Printf("[CheckRoomPermission] Space room %s has no spaceID", roomID)
+		return false, nil
+	}
+
+	spaceIDStr := strconv.FormatInt(*spaceID, 10)
+	log.Printf("[CheckRoomPermission] Checking permissions for space room %s in space %s", roomID, spaceIDStr)
+
+	// First check if user is space owner - space owners have all permissions
+	isOwner, err := r.IsSpaceOwner(spaceIDStr, userID)
+	if err != nil {
+		log.Printf("[CheckRoomPermission] Error checking space ownership: %v", err)
+		return false, err
+	}
+	if isOwner {
+		log.Printf("[CheckRoomPermission] User %s is space owner, granting permission %s", userID, permission)
+		return true, nil
+	}
+
+	// Check member-specific room overrides first
+	var memberGranted, memberDenied int64
+	memberQuery := "SELECT permissions, denied FROM room_member_permissions WHERE room_id = ? AND user_id = ?"
+	if err := r.session.Query(memberQuery, roomID, userID).Scan(&memberGranted, &memberDenied); err == nil {
+		log.Printf("[CheckRoomPermission] Found member overrides for user %s: granted=%d, denied=%d", userID, memberGranted, memberDenied)
+		// Check if permission is explicitly denied
+		permBit := r.getPermissionBit(permission)
+		log.Printf("[CheckRoomPermission] Permission %s has bit value %d", permission, permBit)
+		if permBit != 0 && (memberDenied&int64(permBit)) != 0 {
+			log.Printf("[CheckRoomPermission] Permission %s explicitly denied for user %s", permission, userID)
+			return false, nil
+		}
+		// Check if permission is explicitly granted
+		if permBit != 0 && (memberGranted&int64(permBit)) != 0 {
+			log.Printf("[CheckRoomPermission] Permission %s explicitly granted for user %s", permission, userID)
+			return true, nil
+		}
+	} else {
+		log.Printf("[CheckRoomPermission] No member overrides found for user %s: %v", userID, err)
+	}
+
+	// Get user's roles in the space
+	userRoles, err := r.GetMemberRolesFromJunctionTable(*spaceID, userID)
+	if err != nil {
+		log.Printf("[CheckRoomPermission] Error getting user roles: %v", err)
+		return false, err
+	}
+	log.Printf("[CheckRoomPermission] User %s has roles: %v", userID, userRoles)
+
+	// Check role-specific room overrides
+	for _, roleID := range userRoles {
+		var roleGranted, roleDenied int64
+		roleQuery := "SELECT permissions, denied FROM room_role_permissions WHERE room_id = ? AND role_id = ?"
+		if err := r.session.Query(roleQuery, roomID, roleID).Scan(&roleGranted, &roleDenied); err == nil {
+			log.Printf("[CheckRoomPermission] Found role overrides for role %s: granted=%d, denied=%d", roleID, roleGranted, roleDenied)
+			// Check if permission is explicitly denied
+			permBit := r.getPermissionBit(permission)
+			if permBit != 0 && (roleDenied&int64(permBit)) != 0 {
+				log.Printf("[CheckRoomPermission] Permission %s explicitly denied for role %s", permission, roleID)
+				return false, nil
+			}
+			// Check if permission is explicitly granted
+			if permBit != 0 && (roleGranted&int64(permBit)) != 0 {
+				log.Printf("[CheckRoomPermission] Permission %s explicitly granted for role %s", permission, roleID)
+				return true, nil
+			}
+		} else {
+			log.Printf("[CheckRoomPermission] No role overrides found for role %s: %v", roleID, err)
+		}
+	}
+
+	// Fall back to space permissions for other permissions
+	log.Printf("[CheckRoomPermission] No room overrides found, falling back to space permissions")
+	hasSpacePermission, err := r.CheckSpaceMemberPermission(spaceIDStr, userID, permission)
+	if err != nil {
+		log.Printf("[CheckRoomPermission] Error checking space permission: %v", err)
+		return false, err
+	}
+	log.Printf("[CheckRoomPermission] Space permission check result: %t", hasSpacePermission)
+	return hasSpacePermission, nil
+}
+
+// getPermissionBit returns the bit value for a permission string
+func (r *UserRepository) getPermissionBit(permission string) utils.PermissionValue {
+	switch permission {
+	case utils.ADMINISTRATOR:
+		return utils.PermissionAdministrator
+	case utils.VIEW_ROOMS:
+		return utils.PermissionViewRooms
+	case utils.VIEW_ROOM:
+		return utils.PermissionViewRoom
+	case utils.MANAGE_CHANNELS:
+		return utils.PermissionManageChannels
+	case utils.MANAGE_ROLES:
+		return utils.PermissionManageRoles
+	case utils.MANAGE_SPACE:
+		return utils.PermissionManageSpace
+	case utils.KICK_MEMBERS:
+		return utils.PermissionKickMembers
+	case utils.BAN_MEMBERS:
+		return utils.PermissionBanMembers
+	case utils.MANAGE_NICKNAMES:
+		return utils.PermissionManageNicknames
+	case utils.MANAGE_WEBHOOKS:
+		return utils.PermissionManageWebhooks
+	case utils.VIEW_AUDIT_LOG:
+		return utils.PermissionViewAuditLog
+	case utils.SEND_MESSAGES:
+		return utils.PermissionSendMessages
+	case utils.MANAGE_MESSAGES:
+		return utils.PermissionManageMessages
+	case utils.READ_MESSAGE_HISTORY:
+		return utils.PermissionReadMessageHistory
+	case utils.MENTION_EVERYONE:
+		return utils.PermissionMentionEveryone
+	case utils.USE_EXTERNAL_EMOJIS:
+		return utils.PermissionUseExternalEmojis
+	case utils.ADD_REACTIONS:
+		return utils.PermissionAddReactions
+	case utils.ATTACH_FILES:
+		return utils.PermissionAttachFiles
+	case utils.EMBED_LINKS:
+		return utils.PermissionEmbedLinks
+	case utils.CONNECT:
+		return utils.PermissionConnect
+	case utils.SPEAK:
+		return utils.PermissionSpeak
+	case utils.MUTE_MEMBERS:
+		return utils.PermissionMuteMembers
+	case utils.DEAFEN_MEMBERS:
+		return utils.PermissionDeafenMembers
+	case utils.MOVE_MEMBERS:
+		return utils.PermissionMoveMembers
+	case utils.USE_VOICE_ACTIVATION:
+		return utils.PermissionUseVoiceActivation
+	case utils.PRIORITY_SPEAKER:
+		return utils.PermissionPrioritySpeaker
+	case utils.STREAM:
+		return utils.PermissionStream
+	default:
+		return 0
+	}
+}
+
+// GetRoomPermissionOverrides gets the permission overrides for a user in a specific room
+func (r *UserRepository) GetRoomPermissionOverrides(roomID, userID string) (map[string]interface{}, error) {
+	if r.session == nil {
+		return nil, ErrDatabaseNotInitialized
+	}
+
+	log.Printf("[GetRoomPermissionOverrides] Getting permission overrides for user %s in room %s", userID, roomID)
+
+	// Get room details to check if it's a space room
+	var roomType int
+	var spaceID *int64
+	roomQuery := "SELECT type, space_id FROM rooms WHERE id = ?"
+	if err := r.session.Query(roomQuery, roomID).Scan(&roomType, &spaceID); err != nil {
+		log.Printf("[GetRoomPermissionOverrides] Error fetching room details: %v", err)
+		return nil, err
+	}
+
+	// Only get overrides for space rooms (types 2, 3, 4)
+	if roomType != 2 && roomType != 3 && roomType != 4 {
+		log.Printf("[GetRoomPermissionOverrides] Room %s is not a space room (type %d), skipping overrides", roomID, roomType)
+		return nil, nil
+	}
+
+	if spaceID == nil {
+		log.Printf("[GetRoomPermissionOverrides] Space room %s has no spaceID", roomID)
+		return nil, nil
+	}
+
+	overrides := make(map[string]interface{})
+
+	// Get member-specific overrides
+	var memberGranted, memberDenied int64
+	memberQuery := "SELECT permissions, denied FROM room_member_permissions WHERE room_id = ? AND user_id = ?"
+	if err := r.session.Query(memberQuery, roomID, userID).Scan(&memberGranted, &memberDenied); err == nil {
+		log.Printf("[GetRoomPermissionOverrides] Found member overrides: granted=%d, denied=%d", memberGranted, memberDenied)
+		overrides["member"] = map[string]interface{}{
+			"granted": memberGranted,
+			"denied":  memberDenied,
+		}
+	} else {
+		log.Printf("[GetRoomPermissionOverrides] No member overrides found: %v", err)
+	}
+
+	// Get user's roles in the space
+	userRoles, err := r.GetMemberRolesFromJunctionTable(*spaceID, userID)
+	if err != nil {
+		log.Printf("[GetRoomPermissionOverrides] Error getting user roles: %v", err)
+		return overrides, nil
+	}
+
+	// Get role-specific overrides
+	roleOverrides := make(map[string]interface{})
+	for _, roleID := range userRoles {
+		var roleGranted, roleDenied int64
+		roleQuery := "SELECT permissions, denied FROM room_role_permissions WHERE room_id = ? AND role_id = ?"
+		if err := r.session.Query(roleQuery, roomID, roleID).Scan(&roleGranted, &roleDenied); err == nil {
+			log.Printf("[GetRoomPermissionOverrides] Found role overrides for role %s: granted=%d, denied=%d", roleID, roleGranted, roleDenied)
+			roleOverrides[roleID] = map[string]interface{}{
+				"granted": roleGranted,
+				"denied":  roleDenied,
+			}
+		} else {
+			log.Printf("[GetRoomPermissionOverrides] No role overrides found for role %s: %v", roleID, err)
+		}
+	}
+
+	if len(roleOverrides) > 0 {
+		overrides["roles"] = roleOverrides
+	}
+
+	log.Printf("[GetRoomPermissionOverrides] Returning %d override categories for room %s", len(overrides), roomID)
+	return overrides, nil
 }
 
 func (r *UserRepository) GetSession() *gocql.Session {

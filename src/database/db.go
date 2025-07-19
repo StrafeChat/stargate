@@ -24,9 +24,26 @@ func InitDB() error {
 
 	cluster := gocql.NewCluster(hosts...)
 	cluster.Keyspace = keyspace
-	cluster.Timeout = 5 * time.Second
+	
+	// Optimize connection settings for better performance
+	cluster.Timeout = 2 * time.Second
 	cluster.ConnectTimeout = 5 * time.Second
-	cluster.Consistency = gocql.Quorum
+	cluster.Consistency = gocql.LocalQuorum // Better performance than Quorum
+	
+	// Connection pooling settings for better concurrency
+	cluster.NumConns = 4 // Number of connections per host
+	cluster.MaxPreparedStmts = 1000 // Cache prepared statements
+	cluster.MaxRoutingKeyInfo = 1000 // Cache routing info
+	
+	// Retry policy for better reliability
+	cluster.RetryPolicy = &gocql.ExponentialBackoffRetryPolicy{
+		Min:        100 * time.Millisecond,
+		Max:        10 * time.Second,
+		NumRetries: 3,
+	}
+	
+	// Connection pooling policy
+	cluster.PoolConfig.HostSelectionPolicy = gocql.TokenAwareHostPolicy(gocql.RoundRobinHostPolicy())
 
 	if username != "" && password != "" {
 		cluster.Authenticator = gocql.PasswordAuthenticator{
