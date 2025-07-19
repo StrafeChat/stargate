@@ -252,6 +252,54 @@ func (h *WebSocketHandler) handleIdentify(payload []byte) error {
 	}
 	log.Printf("[WebSocket:READY] Got %d rooms for user %s", len(rooms), userID)
 
+	// Get user spaces
+	spaces, err := h.userRepo.GetUserSpaces(userID)
+	if err != nil {
+		log.Printf("Failed to get user spaces: %v", err)
+		spaces = []repository.Space{}
+	}
+	log.Printf("[WebSocket:READY] Got %d spaces for user %s", len(spaces), userID)
+
+	// Add space member IDs to the list of users to fetch with concurrency
+	if len(spaces) > 0 {
+		log.Printf("[WebSocket:READY] Fetching space members concurrently for %d spaces", len(spaces))
+		
+		// Use channels and goroutines for concurrent space member fetching
+		type spaceMemberResult struct {
+			spaceID string
+			members []repository.SpaceMember
+			err     error
+		}
+		
+		resultChan := make(chan spaceMemberResult, len(spaces))
+		
+		// Launch goroutines to fetch space members concurrently
+		for _, space := range spaces {
+			go func(spaceID string) {
+				members, err := h.userRepo.GetSpaceMembersWithRoles(spaceID)
+				resultChan <- spaceMemberResult{
+					spaceID: spaceID,
+					members: members,
+					err:     err,
+				}
+			}(space.ID)
+		}
+		
+		// Collect results and add member IDs to fetch list
+		for i := 0; i < len(spaces); i++ {
+			result := <-resultChan
+			if result.err != nil {
+				log.Printf("Failed to get members for space %s: %v", result.spaceID, result.err)
+				continue
+			}
+			for _, member := range result.members {
+				userIDsToFetch[member.UserID] = true
+			}
+			log.Printf("[WebSocket:READY] Added %d members from space %s to user fetch list", len(result.members), result.spaceID)
+		}
+		close(resultChan)
+	}
+
 	// Enhance rooms with permission overrides for space rooms
 	enhancedRooms := make([]map[string]interface{}, len(rooms))
 	for i, room := range rooms {
@@ -289,47 +337,70 @@ func (h *WebSocketHandler) handleIdentify(payload []byte) error {
 		enhancedRooms[i] = roomData
 	}
 
-	// Get user spaces
-	spaces, err := h.userRepo.GetUserSpaces(userID)
-	if err != nil {
-		log.Printf("Failed to get user spaces: %v", err)
-		spaces = []repository.Space{}
-	}
-	log.Printf("[WebSocket:READY] Got %d spaces for user %s", len(spaces), userID)
-
-	// Enhance spaces with members and roles data
+	// Enhance spaces with members and roles data using concurrent fetching
 	enhancedSpaces := make([]map[string]interface{}, len(spaces))
-	for i, space := range spaces {
-		// Get members with roles for this space
-		members, err := h.userRepo.GetSpaceMembersWithRoles(space.ID)
-		if err != nil {
-			log.Printf("Failed to get members for space %s: %v", space.ID, err)
-			members = []repository.SpaceMember{}
+	if len(spaces) > 0 {
+		log.Printf("[WebSocket:READY] Enhancing %d spaces with members and roles concurrently", len(spaces))
+		
+		// Use channels and goroutines for concurrent space enhancement
+		type spaceEnhancementResult struct {
+			index   int
+			space   repository.Space
+			members []repository.SpaceMember
+			roles   []repository.SpaceRole
+			err     error
 		}
-		log.Printf("[WebSocket:READY] Got %d members for space %s", len(members), space.ID)
-
-		// Get roles for this space
-		roles, err := h.userRepo.GetSpaceRoles(space.ID)
-		if err != nil {
-			log.Printf("Failed to get roles for space %s: %v", space.ID, err)
-			roles = []repository.SpaceRole{}
+		
+		enhancementChan := make(chan spaceEnhancementResult, len(spaces))
+		
+		// Launch goroutines to enhance spaces concurrently
+		for i, space := range spaces {
+			go func(index int, sp repository.Space) {
+				// Get members with roles for this space
+				members, membersErr := h.userRepo.GetSpaceMembersWithRoles(sp.ID)
+				if membersErr != nil {
+					log.Printf("Failed to get members for space %s: %v", sp.ID, membersErr)
+					members = []repository.SpaceMember{}
+				}
+				
+				// Get roles for this space
+				roles, rolesErr := h.userRepo.GetSpaceRoles(sp.ID)
+				if rolesErr != nil {
+					log.Printf("Failed to get roles for space %s: %v", sp.ID, rolesErr)
+					roles = []repository.SpaceRole{}
+				}
+				
+				enhancementChan <- spaceEnhancementResult{
+					index:   index,
+					space:   sp,
+					members: members,
+					roles:   roles,
+					err:     nil,
+				}
+			}(i, space)
 		}
-		log.Printf("[WebSocket:READY] Got %d roles for space %s", len(roles), space.ID)
-
-		// Create enhanced space object with embedded members and roles
-		enhancedSpaces[i] = map[string]interface{}{
-			"id":           space.ID,
-			"name":         space.Name,
-			"name_acronym": space.NameAcronym,
-			"icon":         space.Icon,
-			"banner":       space.Banner,
-			"description":  space.Description,
-			"owner_id":     space.OwnerID,
-			"created_at":   space.CreatedAt,
-			"updated_at":   space.UpdatedAt,
-			"members":      members,
-			"roles":        roles,
+		
+		// Collect results and build enhanced spaces
+		for i := 0; i < len(spaces); i++ {
+			result := <-enhancementChan
+			log.Printf("[WebSocket:READY] Enhanced space %s with %d members and %d roles", result.space.ID, len(result.members), len(result.roles))
+			
+			// Create enhanced space object with embedded members and roles
+			enhancedSpaces[result.index] = map[string]interface{}{
+				"id":           result.space.ID,
+				"name":         result.space.Name,
+				"name_acronym": result.space.NameAcronym,
+				"icon":         result.space.Icon,
+				"banner":       result.space.Banner,
+				"description":  result.space.Description,
+				"owner_id":     result.space.OwnerID,
+				"created_at":   result.space.CreatedAt,
+				"updated_at":   result.space.UpdatedAt,
+				"members":      result.members,
+				"roles":        result.roles,
+			}
 		}
+		close(enhancementChan)
 	}
 
 	// Add recipient IDs from group PMs
