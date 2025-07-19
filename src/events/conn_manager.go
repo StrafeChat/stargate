@@ -65,18 +65,18 @@ func (m *ConnectionManager) BroadcastPresenceUpdate(userID string, status string
 		return fmt.Errorf("failed to get related users: %v", err)
 	}
 
+	// Create a map to track unique user IDs
+	userIDsMap := make(map[string]bool)
+	for _, id := range relatedUsers {
+		userIDsMap[id] = true
+	}
+
 	// Get all rooms the user is in
 	rooms, err := userRepo.GetUserRooms(userID)
 	if err != nil {
 		log.Printf("Failed to get user rooms: %v", err)
 		// Continue with the users we have, don't fail completely
 	} else {
-		// Create a map to track unique user IDs
-		userIDsMap := make(map[string]bool)
-		for _, id := range relatedUsers {
-			userIDsMap[id] = true
-		}
-
 		// Add all recipients from group PMs
 		for _, room := range rooms {
 			// Type 1 is Group PM
@@ -89,15 +89,37 @@ func (m *ConnectionManager) BroadcastPresenceUpdate(userID string, status string
 				}
 			}
 		}
+	}
 
-		// Convert map back to slice
-		relatedUsers = make([]string, 0, len(userIDsMap))
-		for id := range userIDsMap {
-			relatedUsers = append(relatedUsers, id)
+	// Get all spaces the user is in and add space members
+	spaces, err := userRepo.GetUserSpaces(userID)
+	if err != nil {
+		log.Printf("Failed to get user spaces: %v", err)
+		// Continue with the users we have, don't fail completely
+	} else {
+		// Add all space members
+		for _, space := range spaces {
+			members, err := userRepo.GetSpaceMembers(space.ID)
+			if err != nil {
+				log.Printf("Failed to get members for space %s: %v", space.ID, err)
+				continue
+			}
+			for _, memberUserID := range members {
+				// Don't add the user themselves
+				if memberUserID != userID {
+					userIDsMap[memberUserID] = true
+				}
+			}
 		}
 	}
 
-   log.Printf("Broadcasting presence update to %d users (including group members)", len(relatedUsers))
+	// Convert map back to slice
+	relatedUsers = make([]string, 0, len(userIDsMap))
+	for id := range userIDsMap {
+		relatedUsers = append(relatedUsers, id)
+	}
+
+   log.Printf("Broadcasting presence update to %d users (including group members and space members)", len(relatedUsers))
 
 	// Create presence update payload
 	payload := PresenceUpdatePayload{
