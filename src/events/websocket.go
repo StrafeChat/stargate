@@ -269,6 +269,7 @@ func (h *WebSocketHandler) handleIdentify(payload []byte) error {
 			"recipients": room.Recipients,
 			"creator":    room.Creator,
 			"parent_id":  room.ParentID,
+			"position":   room.Position,
 			"space_id":   room.SpaceID,
 			"created_at": room.CreatedAt,
 			"updated_at": room.UpdatedAt,
