@@ -205,6 +205,18 @@ func (h *WebSocketHandler) handleIdentify(payload []byte) error {
 		}
 	}
 
+	// Get mention unread messages for all rooms
+	mentionUnreadMessages, err := unreadRepo.GetMentionUnreadMessagesForUser(userID)
+	if err != nil {
+		log.Printf("Failed to get mention unread messages: %v", err)
+		mentionUnreadMessages = make(map[string][]string)
+	} else {
+		log.Printf("[WebSocket:READY] Got mention unread messages for user %s: %+v", userID, mentionUnreadMessages)
+		if len(mentionUnreadMessages) == 0 {
+			log.Printf("[WebSocket:READY] Warning: No mention unread messages found for user %s", userID)
+		}
+	}
+
 	// If user's status is not offline, broadcast presence update
 	// if details.Presence.Status != "offline" {
 	log.Printf("Broadcasting presence update for user %s", userID)
@@ -436,6 +448,7 @@ func (h *WebSocketHandler) handleIdentify(payload []byte) error {
 			"rooms":                 enhancedRooms,
 			"spaces":                enhancedSpaces,
 			"unread_messages":       unreadMessages,
+			"mention_unread_messages": mentionUnreadMessages,
 		},
 	}
 

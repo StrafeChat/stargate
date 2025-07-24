@@ -1421,6 +1421,100 @@ func (h *EventHandler) processEvent(payload []byte) {
 			h.Broadcast(memberID, wsPayloadBytes)
 		}
 
+	case "SPACE_MEMBER_REMOVE":
+		data, ok := rawEvent["data"].(map[string]interface{})
+		if !ok {
+			log.Printf("Space member remove event has no data")
+			return
+		}
+		log.Printf("Broadcasting Space Member Remove Event: Space=%s, Member=%s", data["space_id"], data["user_id"])
+
+		// Construct space member remove payload
+		memberPayload := struct {
+			Op string      `json:"op"`
+			D  interface{} `json:"d"`
+		}{
+			Op: EventDispatch,
+			D: map[string]interface{}{
+				"type": "SPACE_MEMBER_REMOVE",
+				"data": data,
+			},
+		}
+
+		// Marshal the member payload
+		wsPayloadBytes, err = json.Marshal(memberPayload)
+		if err != nil {
+			log.Printf("Error marshaling space member remove payload: %v", err)
+			return
+		}
+
+		// Get space ID from event data
+		spaceID, ok := data["space_id"].(string)
+		if !ok {
+			log.Printf("Space member remove event has no space_id")
+			return
+		}
+
+		// Get space members from repository
+		userRepo := repository.GetUserRepository(database.Session)
+		spaceMembers, spaceMembersErr := userRepo.GetSpaceMembers(spaceID)
+		if spaceMembersErr != nil {
+			log.Printf("Error getting space members for member remove: %v", spaceMembersErr)
+			return
+		}
+
+		// Broadcast to all space members
+		for _, memberID := range spaceMembers {
+			h.Broadcast(memberID, wsPayloadBytes)
+		}
+
+	case "SPACE_MEMBER_ADD":
+		data, ok := rawEvent["data"].(map[string]interface{})
+		if !ok {
+			log.Printf("Space member add event has no data")
+			return
+		}
+		log.Printf("Broadcasting Space Member Add Event: Space=%s, Member=%s", data["space_id"], data["user_id"])
+
+		// Construct space member add payload
+		memberPayload := struct {
+			Op string      `json:"op"`
+			D  interface{} `json:"d"`
+		}{
+			Op: EventDispatch,
+			D: map[string]interface{}{
+				"type": "SPACE_MEMBER_ADD",
+				"data": data,
+			},
+		}
+
+		// Marshal the member payload
+		wsPayloadBytes, err = json.Marshal(memberPayload)
+		if err != nil {
+			log.Printf("Error marshaling space member add payload: %v", err)
+			return
+		}
+
+		// Get space ID from event data
+		spaceID, ok := data["space_id"].(string)
+		if !ok {
+			log.Printf("Space member add event has no space_id")
+			return
+		}
+
+		// Get space members from repository
+		userRepo := repository.GetUserRepository(database.Session)
+		spaceMembers, spaceMembersErr := userRepo.GetSpaceMembers(spaceID)
+		if spaceMembersErr != nil {
+			log.Printf("Error getting space members for member add: %v", spaceMembersErr)
+			return
+		}
+
+		// Broadcast to all space members
+		for _, memberID := range spaceMembers {
+			h.Broadcast(memberID, wsPayloadBytes)
+		}
+
 	default:
 		log.Printf("Unknown event type: %s", eventType)
 	}

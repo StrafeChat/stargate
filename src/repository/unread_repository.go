@@ -13,6 +13,12 @@ type UnreadMessage struct {
 	MessageID string `json:"message_id"`
 }
 
+type MentionUnreadMessage struct {
+	UserID    string `json:"user_id"`
+	RoomID    string `json:"room_id"`
+	MessageID string `json:"message_id"`
+}
+
 type UnreadRepository struct {
 	session *gocql.Session
 }
@@ -110,4 +116,58 @@ func (r *UnreadRepository) getUserRooms(userID string) ([]string, error) {
 
 	log.Printf("Found %d room IDs for user %s", len(roomIDs), userID)
 	return roomIDs, nil
+}
+
+// GetMentionUnreadMessagesForUser retrieves all mention unread messages for a user across all rooms
+func (r *UnreadRepository) GetMentionUnreadMessagesForUser(userID string) (map[string][]string, error) {
+	if r.session == nil {
+		return nil, ErrDatabaseNotInitialized
+	}
+
+	// Initialize map to store room_id -> []message_id
+	mentionUnreadMessages := make(map[string][]string)
+
+	// First, get all rooms for this user
+	roomIDs, err := r.getUserRooms(userID)
+	if err != nil {
+		log.Printf("Error fetching rooms for user %s: %v", userID, err)
+		return nil, fmt.Errorf("failed to fetch rooms: %v", err)
+	}
+
+	log.Printf("Found %d rooms for user %s (mention unreads)", len(roomIDs), userID)
+
+	// For each room, query mention unread messages using both user_id and room_id (partition key)
+	totalCount := 0
+	for _, roomID := range roomIDs {
+		// Query to get mention unread messages for the user in this specific room
+		log.Printf("Querying mention unread messages for user %s in room %s", userID, roomID)
+		iter := r.session.Query(
+			"SELECT message_id FROM message_mention_unreads WHERE user_id = ? AND room_id = ?",
+			userID, roomID,
+		).Consistency(gocql.One).Iter()
+
+		var messageID string
+		roomCount := 0
+		for iter.Scan(&messageID) {
+			log.Printf("Found mention unread message: room_id=%s, message_id=%s", roomID, messageID)
+			mentionUnreadMessages[roomID] = append(mentionUnreadMessages[roomID], messageID)
+			roomCount++
+		}
+
+		if roomCount > 0 {
+			log.Printf("Found %d mention unread messages for user %s in room %s", roomCount, userID, roomID)
+		}
+
+		if err := iter.Close(); err != nil {
+			log.Printf("Error fetching mention unread messages for user %s in room %s: %v", userID, roomID, err)
+			// Continue with other rooms instead of failing completely
+			continue
+		}
+
+		totalCount += roomCount
+	}
+
+	log.Printf("Found %d total mention unread messages for user %s across %d rooms", totalCount, userID, len(mentionUnreadMessages))
+
+	return mentionUnreadMessages, nil
 }
