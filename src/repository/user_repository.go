@@ -101,6 +101,28 @@ func (r *UserRepository) ValidateSessionToken(token string) (string, error) {
 	return userID, nil
 }
 
+// ValidateBotToken validates a bot token and returns the bot's user ID
+func (r *UserRepository) ValidateBotToken(token string) (string, error) {
+	if r.session == nil {
+		return "", ErrDatabaseNotInitialized
+	}
+
+	var userID string
+	query := r.session.Query("SELECT user_id FROM bots_by_token WHERE bot_token = ?", token)
+
+	if err := query.Scan(&userID); err != nil {
+		if err == gocql.ErrNotFound {
+			log.Printf("Bot token not found: %s", token)
+			return "", ErrTokenNotFound
+		}
+		log.Printf("Error validating bot token: %v", err)
+		return "", err
+	}
+
+	log.Printf("Bot token valid for user: %s", userID)
+	return userID, nil
+}
+
 func (r *UserRepository) GetUserDetailsWithoutEmail(userID string) (UserDetails, error) {
 	if r.session == nil {
 		return UserDetails{}, ErrDatabaseNotInitialized
@@ -172,11 +194,6 @@ func (r *UserRepository) GetUserDetails(userID string) (UserDetails, error) {
 		}
 		return UserDetails{}, err
 	}
-	status := "offline"
-	if presence.Online {
-		status = presence.Status
-	}
-
 	details.DisplayName = displayName
 	details.Email = email
 	details.Avatar = avatar
@@ -188,7 +205,7 @@ func (r *UserRepository) GetUserDetails(userID string) (UserDetails, error) {
 	details.Flags = flags
 
 	details.Presence = UserPresence{
-		Status:       status,
+		Status:       presence.Status,
 		CustomStatus: presence.CustomStatus,
 	}
 
@@ -211,6 +228,11 @@ func (r *UserRepository) SetUserOnline(userID string) error {
 	}
 
 	presence.Online = true
+
+	// Ensure status is set to "online" if it's empty
+	if presence.Status == "" {
+		presence.Status = "online"
+	}
 
 	return r.session.Query("UPDATE users SET presence = ? WHERE id = ?",
 		presence, userID).Exec()

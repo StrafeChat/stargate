@@ -3,6 +3,7 @@ package events
 type PayloadType string
 
 const (
+	PayloadTypeHello      PayloadType = "HELLO"
 	PayloadTypeIdentify   PayloadType = "IDENTIFY"
 	PayloadTypeHeartbeat  PayloadType = "HEARTBEAT"
 	PayloadTypeHeartbeatAck PayloadType = "HEARTBEAT_ACK"
@@ -18,8 +19,9 @@ type BasePayload struct {
 
 type IdentifyPayload struct {
 	BasePayload
-	Token  string  `json:"token" msgpack:"token"`
-	Device *string `json:"device,omitempty" msgpack:"device,omitempty"`
+	Token    string  `json:"token" msgpack:"token"`
+	BotToken *string `json:"bot_token,omitempty" msgpack:"bot_token,omitempty"`
+	Device   *string `json:"device,omitempty" msgpack:"device,omitempty"`
 }
 
 type HeartbeatPayload struct {
@@ -57,4 +59,9 @@ type PongPayload struct {
 type SpaceCreatePayload struct {
 	BasePayload
 	Space interface{} `json:"space" msgpack:"space"`
+}
+
+type HelloPayload struct {
+	BasePayload
+	HeartbeatInterval int `json:"heartbeat_interval" msgpack:"heartbeat_interval"`
 }

@@ -20,6 +20,8 @@ type WebSocketHandler struct {
 	notificationSvc *services.NotificationService
 	userID          string
 	sessionToken    string
+	botToken        string
+	isBot           bool
 	format          format.Format
 	connectionID    string // Unique ID for this connection instance
 }
@@ -27,6 +29,7 @@ type WebSocketHandler struct {
 // WebSocket Event Types
 const (
 	EventDispatch           = "DISPATCH"
+	EventHello              = "HELLO"
 	EventHeartbeat          = "HEARTBEAT"
 	EventIdentify           = "IDENTIFY"
 	EventReady              = "READY"
@@ -74,7 +77,7 @@ func NewWebSocketHandler(conn *websocket.Conn, r *http.Request) *WebSocketHandle
 
 	log.Printf("Initializing WebSocket handler with format: %s", selectedFormat)
 
-	return &WebSocketHandler{
+	handler := &WebSocketHandler{
 		conn:            conn,
 		encoder:         encoder,
 		userRepo:        repository.GetUserRepository(database.GetSession()),
@@ -82,6 +85,35 @@ func NewWebSocketHandler(conn *websocket.Conn, r *http.Request) *WebSocketHandle
 		format:          selectedFormat,
 		connectionID:    connectionID,
 	}
+
+	// Send HELLO event immediately upon connection
+	if err := handler.sendHello(); err != nil {
+		log.Printf("Failed to send HELLO event: %v", err)
+	}
+
+	return handler
+}
+
+// sendHello sends a HELLO event with heartbeat interval
+func (h *WebSocketHandler) sendHello() error {
+	helloPayload := HelloPayload{
+		BasePayload: BasePayload{
+			Type: PayloadTypeHello,
+		},
+		HeartbeatInterval: 45000, // 45 seconds
+	}
+
+	eventPayload := EventPayload{
+		Op: EventHello,
+		D:  helloPayload,
+	}
+
+	data, err := h.encoder.Encode(eventPayload)
+	if err != nil {
+		return fmt.Errorf("failed to encode HELLO payload: %v", err)
+	}
+
+	return h.conn.WriteMessage(websocket.BinaryMessage, data)
 }
 
 func (h *WebSocketHandler) HandlePayload(messageType int, payload []byte) error {
@@ -167,23 +199,33 @@ func (h *WebSocketHandler) handleIdentify(payload []byte) error {
 		return fmt.Errorf("failed to decode identify payload: %v", err)
 	}
 
-	// Validate session token
-	userID, err := h.userRepo.ValidateSessionToken(identifyPayload.Token)
-	if err != nil {
-		return fmt.Errorf("authentication failed: %v", err)
+	// Determine authentication method and validate
+	var userID string
+	if identifyPayload.BotToken != nil && *identifyPayload.BotToken != "" {
+		// Bot authentication
+		userID, err = h.userRepo.ValidateBotToken(*identifyPayload.BotToken)
+		if err != nil {
+			return fmt.Errorf("bot authentication failed: %v", err)
+		}
+		h.botToken = *identifyPayload.BotToken
+		h.isBot = true
+		log.Printf("Bot authenticated with user ID: %s", userID)
+	} else {
+		// User authentication
+		userID, err = h.userRepo.ValidateSessionToken(identifyPayload.Token)
+		if err != nil {
+			return fmt.Errorf("user authentication failed: %v", err)
+		}
+		h.sessionToken = identifyPayload.Token
+		h.isBot = false
+		log.Printf("User authenticated with user ID: %s", userID)
 	}
 
 	h.userID = userID
-	h.sessionToken = identifyPayload.Token
 
 	// Add connection to ConnectionManager
 	log.Printf("Adding WebSocket connection for user %s", userID)
 	Manager.AddConnection(userID, h)
-
-	// Optional: set user online
-	if setOnlineErr := h.userRepo.SetUserOnline(userID); setOnlineErr != nil {
-		log.Printf("Failed to set user online: %v", err)
-	}
 
 	// Get user details
 	details, err := h.userRepo.GetUserDetails(userID)
@@ -192,68 +234,89 @@ func (h *WebSocketHandler) handleIdentify(payload []byte) error {
 		details = repository.UserDetails{ID: userID}
 	}
 
-	// Get unread messages for all rooms
-	unreadRepo := repository.NewUnreadRepository(h.userRepo.GetSession())
-	unreadMessages, err := unreadRepo.GetUnreadMessagesForUser(userID)
-	if err != nil {
-		log.Printf("Failed to get unread messages: %v", err)
-		unreadMessages = make(map[string][]string)
-	} else {
-		log.Printf("[WebSocket:READY] Got unread messages for user %s: %+v", userID, unreadMessages)
-		if len(unreadMessages) == 0 {
-			log.Printf("[WebSocket:READY] Warning: No unread messages found for user %s", userID)
-		}
-	}
-
-	// Get mention unread messages for all rooms
-	mentionUnreadMessages, err := unreadRepo.GetMentionUnreadMessagesForUser(userID)
-	if err != nil {
-		log.Printf("Failed to get mention unread messages: %v", err)
-		mentionUnreadMessages = make(map[string][]string)
-	} else {
-		log.Printf("[WebSocket:READY] Got mention unread messages for user %s: %+v", userID, mentionUnreadMessages)
-		if len(mentionUnreadMessages) == 0 {
-			log.Printf("[WebSocket:READY] Warning: No mention unread messages found for user %s", userID)
-		}
-	}
-
-	// If user's status is not offline, broadcast presence update
-	// if details.Presence.Status != "offline" {
-	log.Printf("Broadcasting presence update for user %s", userID)
-	if broadcastErr := Manager.BroadcastPresenceUpdate(userID, details.Presence.Status, details.Presence.CustomStatus, h.userRepo); broadcastErr != nil {
-		log.Printf("Failed to broadcast presence update: %v", err)
-	}
-	// }
-
-	// Get user relationships and requests
-	relationships, err := h.userRepo.GetUserRelationships(userID)
-	if err != nil {
-		log.Printf("Failed to get user relationships: %v", err)
-		relationships = []string{}
-	}
-	log.Printf("[WebSocket:READY] Got relationships for user %s: %v", userID, relationships)
-
-	relationshipRequests, err := h.userRepo.GetUserRelationshipRequests(userID)
-	if err != nil {
-		log.Printf("Failed to get user relationship requests: %v", err)
-		relationshipRequests = []repository.Relationship{}
-	}
-	log.Printf("[WebSocket:READY] Got relationship requests for user %s: %+v", userID, relationshipRequests)
-
-	// Get related user IDs
-	relatedUserIDs, err := h.userRepo.GetRelatedUserIDs(userID)
-	if err != nil {
-		log.Printf("Failed to get related user IDs: %v", err)
-		relatedUserIDs = []string{}
-	}
-
-	// Add friend IDs to the list of users to fetch if not already included
+	// Initialize variables for user-specific data
+	var unreadMessages map[string][]string
+	var mentionUnreadMessages map[string][]string
+	var relationships []string
+	var relationshipRequests []repository.Relationship
+	var relatedUserIDs []string
 	userIDsToFetch := make(map[string]bool)
-	for _, id := range relatedUserIDs {
-		userIDsToFetch[id] = true
+
+	// Set user/bot online and handle presence
+	if setOnlineErr := h.userRepo.SetUserOnline(userID); setOnlineErr != nil {
+		log.Printf("Failed to set user online: %v", setOnlineErr)
 	}
-	for _, id := range relationships {
-		userIDsToFetch[id] = true
+
+	// Broadcast presence update for both users and bots
+	log.Printf("Broadcasting presence update for %s %s", map[bool]string{true: "bot", false: "user"}[h.isBot], userID)
+	if broadcastErr := Manager.BroadcastPresenceUpdate(userID, details.Presence.Status, details.Presence.CustomStatus, h.userRepo); broadcastErr != nil {
+		log.Printf("Failed to broadcast presence update: %v", broadcastErr)
+	}
+
+	// Only handle relationships and unread messages for regular users, not bots
+	if !h.isBot {
+		// Get unread messages for all rooms
+		unreadRepo := repository.NewUnreadRepository(h.userRepo.GetSession())
+		unreadMessages, err = unreadRepo.GetUnreadMessagesForUser(userID)
+		if err != nil {
+			log.Printf("Failed to get unread messages: %v", err)
+			unreadMessages = make(map[string][]string)
+		} else {
+			log.Printf("[WebSocket:READY] Got unread messages for user %s: %+v", userID, unreadMessages)
+			if len(unreadMessages) == 0 {
+				log.Printf("[WebSocket:READY] Warning: No unread messages found for user %s", userID)
+			}
+		}
+
+		// Get mention unread messages for all rooms
+		mentionUnreadMessages, err = unreadRepo.GetMentionUnreadMessagesForUser(userID)
+		if err != nil {
+			log.Printf("Failed to get mention unread messages: %v", err)
+			mentionUnreadMessages = make(map[string][]string)
+		} else {
+			log.Printf("[WebSocket:READY] Got mention unread messages for user %s: %+v", userID, mentionUnreadMessages)
+			if len(mentionUnreadMessages) == 0 {
+				log.Printf("[WebSocket:READY] Warning: No mention unread messages found for user %s", userID)
+			}
+		}
+
+		// Get user relationships and requests
+		relationships, err = h.userRepo.GetUserRelationships(userID)
+		if err != nil {
+			log.Printf("Failed to get user relationships: %v", err)
+			relationships = []string{}
+		}
+		log.Printf("[WebSocket:READY] Got relationships for user %s: %v", userID, relationships)
+
+		relationshipRequests, err = h.userRepo.GetUserRelationshipRequests(userID)
+		if err != nil {
+			log.Printf("Failed to get user relationship requests: %v", err)
+			relationshipRequests = []repository.Relationship{}
+		}
+		log.Printf("[WebSocket:READY] Got relationship requests for user %s: %+v", userID, relationshipRequests)
+
+		// Get related user IDs
+		relatedUserIDs, err = h.userRepo.GetRelatedUserIDs(userID)
+		if err != nil {
+			log.Printf("Failed to get related user IDs: %v", err)
+			relatedUserIDs = []string{}
+		}
+
+		// Add friend IDs to the list of users to fetch if not already included
+		for _, id := range relatedUserIDs {
+			userIDsToFetch[id] = true
+		}
+		for _, id := range relationships {
+			userIDsToFetch[id] = true
+		}
+	} else {
+		// For bots, initialize empty collections
+		unreadMessages = make(map[string][]string)
+		mentionUnreadMessages = make(map[string][]string)
+		relationships = []string{}
+		relationshipRequests = []repository.Relationship{}
+		relatedUserIDs = []string{}
+		log.Printf("[WebSocket:READY] Bot authenticated, skipping relationship and unread message data")
 	}
 
 	// Get user rooms
@@ -551,6 +614,7 @@ func (h *WebSocketHandler) Close() {
 	if h.userID != "" {
 		Manager.RemoveConnection(h.userID, h)
 
+		// Handle presence updates for both users and bots
 		// Only proceed with offline status if this was the last connection
 		if !Manager.HasOtherConnections(h.userID, h) {
 			// Get current user details to check their status
@@ -562,20 +626,28 @@ func (h *WebSocketHandler) Close() {
 
 			// Only send presence update if they weren't already showing as offline
 			if details.Presence.Status != "offline" {
-				log.Printf("Last connection closed for user %s, broadcasting offline status", h.userID)
+				log.Printf("Last connection closed for %s %s, broadcasting offline status", map[bool]string{true: "bot", false: "user"}[h.isBot], h.userID)
 				if err := Manager.BroadcastPresenceUpdate(h.userID, "offline", details.Presence.CustomStatus, h.userRepo); err != nil {
 					log.Printf("Failed to broadcast offline presence update: %v", err)
 				}
 
 				// Update the user's status in the database
-				if err := h.userRepo.SetUserOffline(h.userID, h.sessionToken); err != nil {
-					log.Printf("Failed to set user offline: %v", err)
+				if h.isBot {
+					// For bots, use bot token instead of session token
+					if err := h.userRepo.SetUserOffline(h.userID, h.botToken); err != nil {
+						log.Printf("Failed to set bot offline: %v", err)
+					}
+				} else {
+					// For users, use session token
+					if err := h.userRepo.SetUserOffline(h.userID, h.sessionToken); err != nil {
+						log.Printf("Failed to set user offline: %v", err)
+					}
 				}
 			} else {
-				log.Printf("User %s was already showing as offline, skipping presence update", h.userID)
+				log.Printf("%s %s was already showing as offline, skipping presence update", map[bool]string{true: "Bot", false: "User"}[h.isBot], h.userID)
 			}
 		} else {
-			log.Printf("User %s has other active connections, not updating presence", h.userID)
+			log.Printf("%s %s has other active connections, not updating presence", map[bool]string{true: "Bot", false: "User"}[h.isBot], h.userID)
 		}
 	}
 
