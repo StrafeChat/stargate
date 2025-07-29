@@ -334,9 +334,9 @@ func (h *EventHandler) processEvent(payload []byte) {
 			return
 		}
 
-		// Get room members with VIEW_ROOMS permission from repository
+		// Get room members with VIEW_ROOM permission from repository
 		userRepo := repository.GetUserRepository(database.Session)
-		roomMembers, roomMembersErr := userRepo.GetRoomMembersWithPermissions(roomID, "VIEW_ROOMS")
+		roomMembers, roomMembersErr := userRepo.GetRoomMembersWithPermissions(roomID, "VIEW_ROOM")
 		if roomMembersErr != nil {
 			log.Printf("Error getting room members with permissions: %v", roomMembersErr)
 			return
@@ -1231,9 +1231,9 @@ func (h *EventHandler) processEvent(payload []byte) {
 			return
 		}
 
-		// Get room members with VIEW_ROOMS permission from repository
+		// Get room members with VIEW_ROOM permission from repository
 		userRepo := repository.GetUserRepository(database.Session)
-		roomMembers, err := userRepo.GetRoomMembersWithPermissions(roomID, "VIEW_ROOMS")
+		roomMembers, err := userRepo.GetRoomMembersWithPermissions(roomID, "VIEW_ROOM")
 		if err != nil {
 			log.Printf("Error getting room members with permissions: %v", err)
 			return

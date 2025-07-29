@@ -733,12 +733,12 @@ func (r *UserRepository) GetRoomMembersWithPermissions(roomID string, requiredPe
 		return nil, err
 	}
 
-	// Filter members based on permissions
+	// Filter members based on room-specific permissions
 	var authorizedMembers []string
 	for _, memberID := range spaceMembers {
-		hasPermission, err := r.CheckSpaceMemberPermission(spaceIDStr, memberID, requiredPermission)
+		hasPermission, err := r.CheckRoomPermission(roomID, memberID, requiredPermission)
 		if err != nil {
-			log.Printf("[GetRoomMembersWithPermissions] Error checking permission for user %s: %v", memberID, err)
+			log.Printf("[GetRoomMembersWithPermissions] Error checking room permission for user %s: %v", memberID, err)
 			continue
 		}
 		if hasPermission {
