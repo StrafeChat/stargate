@@ -622,7 +622,7 @@ func (h *EventHandler) processEvent(payload []byte) {
 			default:
 				spaceID = fmt.Sprintf("%v", v)
 			}
-			
+
 			if spaceID != "" && spaceID != "0" {
 				// Get space members for space rooms
 				spaceMembers, err := userRepo.GetSpaceMembers(spaceID)
@@ -1091,13 +1091,14 @@ func (h *EventHandler) processEvent(payload []byte) {
 
 		// Get room members from repository
 		userRepo := repository.GetUserRepository(database.Session)
-		roomMembers, err := userRepo.GetRoomMembers(roomID)
+		roomMembers, err := userRepo.GetRoomMembersWithPermissions(roomID, "VIEW_ROOMS")
 		if err != nil {
-			log.Printf("Error getting room members for voice event: %v", err)
+			log.Printf("Error getting room members with permissions for voice event: %v", err)
 			return
 		}
 
 		// Broadcast to all room members
+		log.Printf("Broadcasting to %s", roomMembers)
 		for _, memberID := range roomMembers {
 			h.Broadcast(memberID, wsPayloadBytes)
 		}
