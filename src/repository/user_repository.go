@@ -454,6 +454,7 @@ type Room struct {
 	ID            string    `json:"id"`
 	Creator       *string   `json:"creator,omitempty"`  // null if DM, set if group
 	Recipients    []string  `json:"recipients"`         // array of user IDs
+	Participants  []string  `json:"participants"`       // user ids of current voice participants
 	Type          int       `json:"type"`               // 0 = DM, 1 = Group DM, 2 = Server Room, 3 = Space Room, 4 = Space Section
 	SpaceID       *string   `json:"space_id,omitempty"` // space ID for space rooms and sections
 	Position      *int      `json:"position"`
