@@ -184,23 +184,6 @@ func (h *EventHandler) StartEventListener() {
 		go h.eventWorker(eventChan)
 	}
 
-	message, err := json.Marshal(struct {
-		Type    string `json:"type"`
-		Request bool   `json:"request"`
-	}{
-		Type:    "VOICE_SYNC",
-		Request: true,
-	})
-	if err != nil {
-		log.Printf("[VoiceSync] Requesting sync failed: %v", err)
-	} else {
-		if err := database.Rdb.Publish("VOICE_EVENTS", string(message)).Err(); err != nil {
-			log.Printf("[VoiceSync] Failed to publish sync request: %v", err)
-		} else {
-			log.Printf("[VoiceSync] published request")
-		}
-	}
-
 	ch := pubsub.Channel()
 	for msg := range ch {
 		log.Printf("Received Redis pub/sub message: Channel=%s, Payload=%s",
@@ -1064,15 +1047,6 @@ func (h *EventHandler) processEvent(payload []byte) {
 		for _, memberID := range roomMembers {
 			h.Broadcast(memberID, wsPayloadBytes)
 		}
-	case "VOICE_SYNC": // complete voice data sent from equinox; usually requested on startup
-		data, ok := rawEvent["data"].(map[string]map[int]([]string))
-		if !ok {
-			log.Printf("Voice sync event has no data, %v", rawEvent)
-			return
-		}
-		log.Printf("Syncing voice data from Equinox: %s", data)
-
-		//portal.SyncData(data)
 	case "VOICE_PARTICIPANT_JOIN", "VOICE_PARTICIPANT_LEAVE":
 		data, ok := rawEvent["data"].(map[string]interface{})
 		if !ok {
