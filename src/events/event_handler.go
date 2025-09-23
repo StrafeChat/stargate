@@ -42,7 +42,7 @@ func (h *EventHandler) BroadcastToMultipleUsers(userIDs []string, eventData []by
 		return
 	}
 
-	log.Printf("Broadcasting event to %d users concurrently", len(userIDs))
+	log.Printf("Broadcasting event to %d users concurrently: %v", len(userIDs), userIDs)
 
 	// Use a worker pool for concurrent broadcasting
 	const maxWorkers = 20
@@ -90,6 +90,15 @@ func (h *EventHandler) Broadcast(userID string, eventData []byte) {
 	}
 
 	log.Printf("Found %d WebSocket handlers for user %s", len(handlers), userID)
+
+	// Log all connected users for debugging
+	Manager.mu.RLock()
+	connectedUsers := make([]string, 0, len(Manager.connections))
+	for uid := range Manager.connections {
+		connectedUsers = append(connectedUsers, uid)
+	}
+	Manager.mu.RUnlock()
+	log.Printf("Currently connected users: %v", connectedUsers)
 
 	// Parse the original event to extract type and details
 	var originalEvent map[string]interface{}
@@ -234,7 +243,7 @@ func (h *EventHandler) processEvent(payload []byte) {
 	createdAtFloat, _ := rawEvent["created_at"].(float64)
 	createdAt := int64(createdAtFloat)
 
-	log.Printf("Processed event: Type=%s, SenderID=%s, CreatedAt=%d", eventType, senderID, createdAt)
+	log.Printf("Processed event: Type=%s, SenderID=%s, CreatedAt=%d, FullEvent=%+v", eventType, senderID, createdAt, rawEvent)
 
 	var opCode string
 	switch eventType {
@@ -1515,6 +1524,233 @@ func (h *EventHandler) processEvent(payload []byte) {
 		for _, memberID := range spaceMembers {
 			h.Broadcast(memberID, wsPayloadBytes)
 		}
+
+	case "ROOM_REACTION_ADD", "ROOM_REACTION_REMOVE", "REACTION_ADD", "REACTION_REMOVE":
+		// Debug: Log the entire raw event structure
+		log.Printf("Raw reaction event received: %+v", rawEvent)
+
+		// For reaction events, the data is at the root level, not nested under "data"
+		messageID, ok := rawEvent["message_id"].(string)
+		if !ok {
+			log.Printf("Reaction event has no message_id")
+			return
+		}
+
+		roomID, ok := rawEvent["room_id"].(string)
+		if !ok {
+			log.Printf("Reaction event has no room_id")
+			return
+		}
+
+		emoji, ok := rawEvent["emoji"].(string)
+		if !ok {
+			log.Printf("Reaction event has no emoji")
+			return
+		}
+
+		count, _ := rawEvent["count"].(float64)
+		users, _ := rawEvent["users"].([]interface{})
+
+		// Convert users array to string array
+		userStrings := make([]string, len(users))
+		for i, user := range users {
+			if userStr, ok := user.(string); ok {
+				userStrings[i] = userStr
+			}
+		}
+
+		log.Printf("Broadcasting Reaction Event: Type=%s, Room=%s, Message=%s, Emoji=%s, Count=%.0f, Users=%v",
+			eventType, roomID, messageID, emoji, count, userStrings)
+
+		// Construct reaction payload
+		reactionPayload := struct {
+			Op string      `json:"op"`
+			D  interface{} `json:"d"`
+		}{
+			Op: EventMessage,
+			D: map[string]interface{}{
+				"event_type": eventType,
+				"data": map[string]interface{}{
+					"message_id": messageID,
+					"room_id":    roomID,
+					"emoji":      emoji,
+					"count":      int(count),
+					"users":      userStrings,
+				},
+			},
+		}
+
+		// Marshal the reaction payload
+		wsPayloadBytes, err = json.Marshal(reactionPayload)
+		if err != nil {
+			log.Printf("Error marshaling reaction payload: %v", err)
+			return
+		}
+
+		log.Printf("Reaction payload marshaled successfully: %s", string(wsPayloadBytes))
+
+		// Get room members with VIEW_ROOMS permission from repository
+		userRepo := repository.GetUserRepository(database.Session)
+		roomMembers, roomMembersErr := userRepo.GetRoomMembersWithPermissions(roomID, "VIEW_ROOMS")
+		if roomMembersErr != nil {
+			log.Printf("Error getting room members with permissions: %v", roomMembersErr)
+			return
+		}
+
+		log.Printf("Found %d room members with VIEW_ROOMS permission: %v", len(roomMembers), roomMembers)
+
+		// Broadcast to all room members concurrently
+		h.BroadcastToMultipleUsers(roomMembers, wsPayloadBytes)
+
+	case "CUSTOM_EMOJI_CREATE":
+		data, ok := rawEvent["data"].(map[string]interface{})
+		if !ok {
+			log.Printf("Custom emoji create event has no data")
+			return
+		}
+		spaceID, ok := data["space_id"].(string)
+		if !ok {
+			log.Printf("Custom emoji create event has no space_id")
+			return
+		}
+		shortcode, _ := data["shortcode"].(string)
+		log.Printf("Broadcasting Custom Emoji Create Event: Space=%s, Shortcode=%s, Creator=%s", spaceID, shortcode, senderID)
+
+		// Construct custom emoji creation payload
+		emojiPayload := struct {
+			Op string      `json:"op"`
+			D  interface{} `json:"d"`
+		}{
+			Op: EventDispatch,
+			D: map[string]interface{}{
+				"type": "CUSTOM_EMOJI_CREATE",
+				"data": map[string]interface{}{
+					"space_id":   spaceID,
+					"shortcode":  data["shortcode"],
+					"file_id":    data["file_id"],
+					"name":       data["name"],
+					"created_by": data["created_by"],
+					"created_at": data["created_at"],
+				},
+			},
+		}
+
+		// Marshal the emoji payload
+		wsPayloadBytes, err = json.Marshal(emojiPayload)
+		if err != nil {
+			log.Printf("Error marshaling custom emoji create payload: %v", err)
+			return
+		}
+
+		// Get space members to broadcast the emoji creation
+		userRepo := repository.GetUserRepository(database.Session)
+		spaceMembers, spaceMembersErr := userRepo.GetSpaceMembers(spaceID)
+		if spaceMembersErr != nil {
+			log.Printf("Error getting space members for custom emoji create: %v", spaceMembersErr)
+			return
+		}
+
+		// Broadcast to all space members concurrently
+		h.BroadcastToMultipleUsers(spaceMembers, wsPayloadBytes)
+
+	case "CUSTOM_EMOJI_DELETE":
+		data, ok := rawEvent["data"].(map[string]interface{})
+		if !ok {
+			log.Printf("Custom emoji delete event has no data")
+			return
+		}
+		spaceID, ok := data["space_id"].(string)
+		if !ok {
+			log.Printf("Custom emoji delete event has no space_id")
+			return
+		}
+		shortcode, _ := data["shortcode"].(string)
+		log.Printf("Broadcasting Custom Emoji Delete Event: Space=%s, Shortcode=%s, Deleted by=%s", spaceID, shortcode, senderID)
+
+		// Construct custom emoji deletion payload
+		emojiPayload := struct {
+			Op string      `json:"op"`
+			D  interface{} `json:"d"`
+		}{
+			Op: EventDispatch,
+			D: map[string]interface{}{
+				"type": "CUSTOM_EMOJI_DELETE",
+				"data": map[string]interface{}{
+					"space_id":   spaceID,
+					"shortcode":  shortcode,
+					"deleted_by": senderID,
+				},
+			},
+		}
+
+		// Marshal the emoji payload
+		wsPayloadBytes, err = json.Marshal(emojiPayload)
+		if err != nil {
+			log.Printf("Error marshaling custom emoji delete payload: %v", err)
+			return
+		}
+
+		// Get space members to broadcast the emoji deletion
+		userRepo := repository.GetUserRepository(database.Session)
+		spaceMembers, spaceMembersErr := userRepo.GetSpaceMembers(spaceID)
+		if spaceMembersErr != nil {
+			log.Printf("Error getting space members for custom emoji delete: %v", spaceMembersErr)
+			return
+		}
+
+		// Broadcast to all space members concurrently
+		h.BroadcastToMultipleUsers(spaceMembers, wsPayloadBytes)
+
+	case "CUSTOM_EMOJI_UPDATE":
+		data, ok := rawEvent["data"].(map[string]interface{})
+		if !ok {
+			log.Printf("Custom emoji update event has no data")
+			return
+		}
+		spaceID, ok := data["space_id"].(string)
+		if !ok {
+			log.Printf("Custom emoji update event has no space_id")
+			return
+		}
+		shortcode, _ := data["shortcode"].(string)
+		log.Printf("Broadcasting Custom Emoji Update Event: Space=%s, Shortcode=%s, Updated by=%s", spaceID, shortcode, senderID)
+
+		// Construct custom emoji update payload
+		emojiPayload := struct {
+			Op string      `json:"op"`
+			D  interface{} `json:"d"`
+		}{
+			Op: EventDispatch,
+			D: map[string]interface{}{
+				"type": "CUSTOM_EMOJI_UPDATE",
+				"data": map[string]interface{}{
+					"space_id":   spaceID,
+					"shortcode":  data["shortcode"],
+					"file_id":    data["file_id"],
+					"name":       data["name"],
+					"updated_by": senderID,
+					"updated_at": data["updated_at"],
+				},
+			},
+		}
+
+		// Marshal the emoji payload
+		wsPayloadBytes, err = json.Marshal(emojiPayload)
+		if err != nil {
+			log.Printf("Error marshaling custom emoji update payload: %v", err)
+			return
+		}
+
+		// Get space members to broadcast the emoji update
+		userRepo := repository.GetUserRepository(database.Session)
+		spaceMembers, spaceMembersErr := userRepo.GetSpaceMembers(spaceID)
+		if spaceMembersErr != nil {
+			log.Printf("Error getting space members for custom emoji update: %v", spaceMembersErr)
+			return
+		}
+
+		// Broadcast to all space members concurrently
+		h.BroadcastToMultipleUsers(spaceMembers, wsPayloadBytes)
 
 	default:
 		log.Printf("Unknown event type: %s", eventType)

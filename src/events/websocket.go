@@ -39,6 +39,9 @@ const (
 	EventRelationshipAccept = "RELATIONSHIP_ACCEPT"
 	EventRelationshipDelete = "RELATIONSHIP_DELETE"
 	EventPresenceUpdate     = "PRESENCE_UPDATE"
+	EventCustomEmojiCreate  = "CUSTOM_EMOJI_CREATE"
+	EventCustomEmojiDelete  = "CUSTOM_EMOJI_DELETE"
+	EventCustomEmojiUpdate  = "CUSTOM_EMOJI_UPDATE"
 )
 
 // Standardized event payload structure
@@ -338,16 +341,16 @@ func (h *WebSocketHandler) handleIdentify(payload []byte) error {
 	// Add space member IDs to the list of users to fetch with concurrency
 	if len(spaces) > 0 {
 		log.Printf("[WebSocket:READY] Fetching space members concurrently for %d spaces", len(spaces))
-		
+
 		// Use channels and goroutines for concurrent space member fetching
 		type spaceMemberResult struct {
 			spaceID string
 			members []repository.SpaceMember
 			err     error
 		}
-		
+
 		resultChan := make(chan spaceMemberResult, len(spaces))
-		
+
 		// Launch goroutines to fetch space members concurrently
 		for _, space := range spaces {
 			go func(spaceID string) {
@@ -359,7 +362,7 @@ func (h *WebSocketHandler) handleIdentify(payload []byte) error {
 				}
 			}(space.ID)
 		}
-		
+
 		// Collect results and add member IDs to fetch list
 		for i := 0; i < len(spaces); i++ {
 			result := <-resultChan
@@ -416,7 +419,7 @@ func (h *WebSocketHandler) handleIdentify(payload []byte) error {
 	enhancedSpaces := make([]map[string]interface{}, len(spaces))
 	if len(spaces) > 0 {
 		log.Printf("[WebSocket:READY] Enhancing %d spaces with members and roles concurrently", len(spaces))
-		
+
 		// Use channels and goroutines for concurrent space enhancement
 		type spaceEnhancementResult struct {
 			index   int
@@ -425,9 +428,9 @@ func (h *WebSocketHandler) handleIdentify(payload []byte) error {
 			roles   []repository.SpaceRole
 			err     error
 		}
-		
+
 		enhancementChan := make(chan spaceEnhancementResult, len(spaces))
-		
+
 		// Launch goroutines to enhance spaces concurrently
 		for i, space := range spaces {
 			go func(index int, sp repository.Space) {
@@ -437,14 +440,14 @@ func (h *WebSocketHandler) handleIdentify(payload []byte) error {
 					log.Printf("Failed to get members for space %s: %v", sp.ID, membersErr)
 					members = []repository.SpaceMember{}
 				}
-				
+
 				// Get roles for this space
 				roles, rolesErr := h.userRepo.GetSpaceRoles(sp.ID)
 				if rolesErr != nil {
 					log.Printf("Failed to get roles for space %s: %v", sp.ID, rolesErr)
 					roles = []repository.SpaceRole{}
 				}
-				
+
 				enhancementChan <- spaceEnhancementResult{
 					index:   index,
 					space:   sp,
@@ -454,12 +457,12 @@ func (h *WebSocketHandler) handleIdentify(payload []byte) error {
 				}
 			}(i, space)
 		}
-		
+
 		// Collect results and build enhanced spaces
 		for i := 0; i < len(spaces); i++ {
 			result := <-enhancementChan
 			log.Printf("[WebSocket:READY] Enhanced space %s with %d members and %d roles", result.space.ID, len(result.members), len(result.roles))
-			
+
 			// Create enhanced space object with embedded members and roles
 			enhancedSpaces[result.index] = map[string]interface{}{
 				"id":           result.space.ID,
@@ -504,13 +507,13 @@ func (h *WebSocketHandler) handleIdentify(payload []byte) error {
 	readyPayload := EventPayload{
 		Op: EventReady,
 		D: map[string]interface{}{
-			"client_user":           details,
-			"users":                 relatedUsers,
-			"relationships":         relationships,
-			"relationship_requests": relationshipRequests,
-			"rooms":                 enhancedRooms,
-			"spaces":                enhancedSpaces,
-			"unread_messages":       unreadMessages,
+			"client_user":             details,
+			"users":                   relatedUsers,
+			"relationships":           relationships,
+			"relationship_requests":   relationshipRequests,
+			"rooms":                   enhancedRooms,
+			"spaces":                  enhancedSpaces,
+			"unread_messages":         unreadMessages,
 			"mention_unread_messages": mentionUnreadMessages,
 		},
 	}
