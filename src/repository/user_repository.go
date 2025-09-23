@@ -1,6 +1,7 @@
 package repository
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -8,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/StrafeChat/stargate/src/database"
 	"github.com/StrafeChat/stargate/src/utils"
 	"github.com/gocql/gocql"
 )
@@ -454,6 +456,7 @@ type Room struct {
 	ID            string    `json:"id"`
 	Creator       *string   `json:"creator,omitempty"`  // null if DM, set if group
 	Recipients    []string  `json:"recipients"`         // array of user IDs
+	Participants  []string  `json:"participants"`       // user ids of current voice participants
 	Type          int       `json:"type"`               // 0 = DM, 1 = Group DM, 2 = Server Room, 3 = Space Room, 4 = Space Section
 	SpaceID       *string   `json:"space_id,omitempty"` // space ID for space rooms and sections
 	Position      *int      `json:"position"`
@@ -553,6 +556,20 @@ func (r *UserRepository) GetUserRooms(userID string) ([]Room, error) {
 			continue
 		}
 
+		// get voice participation data from redis
+		values, err := database.Rdb.Get("lvroom:" + id).Result()
+		if err != nil {
+			log.Printf("[VoiceSync] Error fetching participants for room %v: %v", id, err)
+		}
+		if len(values) == 0 {
+			values = "[]"
+		}
+		var participants []string
+		err = json.Unmarshal([]byte(values), &participants)
+		if err != nil {
+			log.Printf("[VoiceSync] Error unmarshaling participants %v: %v", values, err)
+		}
+
 		room.Creator = creator
 		room.Recipients = recipients
 		// Convert spaceID from *int64 to *string
@@ -572,6 +589,7 @@ func (r *UserRepository) GetUserRooms(userID string) ([]Room, error) {
 		}
 		room.CreatedAt = createdAt
 		room.UpdatedAt = updatedAt
+		room.Participants = participants
 
 		rooms = append(rooms, room)
 	}

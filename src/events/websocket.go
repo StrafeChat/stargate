@@ -389,16 +389,17 @@ func (h *WebSocketHandler) handleIdentify(payload []byte) error {
 
 		// Convert room to map
 		roomData := map[string]interface{}{
-			"id":         room.ID,
-			"name":       room.Name,
-			"type":       room.Type,
-			"recipients": room.Recipients,
-			"creator":    room.Creator,
-			"parent_id":  room.ParentID,
-			"position":   room.Position,
-			"space_id":   room.SpaceID,
-			"created_at": room.CreatedAt,
-			"updated_at": room.UpdatedAt,
+			"id":           room.ID,
+			"name":         room.Name,
+			"type":         room.Type,
+			"recipients":   room.Recipients,
+			"participants": room.Participants,
+			"creator":      room.Creator,
+			"parent_id":    room.ParentID,
+			"position":     room.Position,
+			"space_id":     room.SpaceID,
+			"created_at":   room.CreatedAt,
+			"updated_at":   room.UpdatedAt,
 		}
 
 		// Add permission overrides for space rooms (types 2, 3, 4)

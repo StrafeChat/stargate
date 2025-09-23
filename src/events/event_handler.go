@@ -1056,7 +1056,6 @@ func (h *EventHandler) processEvent(payload []byte) {
 		for _, memberID := range roomMembers {
 			h.Broadcast(memberID, wsPayloadBytes)
 		}
-
 	case "VOICE_PARTICIPANT_JOIN", "VOICE_PARTICIPANT_LEAVE":
 		data, ok := rawEvent["data"].(map[string]interface{})
 		if !ok {
