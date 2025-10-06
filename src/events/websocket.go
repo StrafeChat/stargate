@@ -400,6 +400,7 @@ func (h *WebSocketHandler) handleIdentify(payload []byte) error {
 			"space_id":     room.SpaceID,
 			"created_at":   room.CreatedAt,
 			"updated_at":   room.UpdatedAt,
+			"ringing":      room.Ringing,
 		}
 
 		// Add permission overrides for space rooms (types 2, 3, 4)

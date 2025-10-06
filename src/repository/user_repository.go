@@ -467,6 +467,7 @@ type Room struct {
 	LastMessageId string    `json:"last_message_id,omitempty"`
 	CreatedAt     time.Time `json:"created_at"`
 	UpdatedAt     time.Time `json:"updated_at,omitempty"`
+	Ringing       []string  `json:"ringing,omitempty"`
 }
 
 // GetUserRooms retrieves all rooms that a user is a member of
@@ -570,6 +571,20 @@ func (r *UserRepository) GetUserRooms(userID string) ([]Room, error) {
 			log.Printf("[VoiceSync] Error unmarshaling participants %v: %v", values, err)
 		}
 
+		// get ringing data from redis
+		ringing, err := database.Rdb.Get("lvcalls:" + id).Result()
+		if err != nil {
+			log.Printf("[VoiceSync] Error fetching call data for room %v: %v", id, err)
+		}
+		if len(ringing) == 0 {
+			ringing = "[]"
+		}
+		var users []string
+		err = json.Unmarshal([]byte(ringing), &users)
+		if err != nil {
+			log.Printf("[VoiceSync] Error unmarshalling call data %v: %v", ringing, err)
+		}
+
 		room.Creator = creator
 		room.Recipients = recipients
 		// Convert spaceID from *int64 to *string
@@ -590,6 +605,7 @@ func (r *UserRepository) GetUserRooms(userID string) ([]Room, error) {
 		room.CreatedAt = createdAt
 		room.UpdatedAt = updatedAt
 		room.Participants = participants
+		room.Ringing = users
 
 		rooms = append(rooms, room)
 	}

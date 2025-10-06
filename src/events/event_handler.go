@@ -1056,6 +1056,122 @@ func (h *EventHandler) processEvent(payload []byte) {
 		for _, memberID := range roomMembers {
 			h.Broadcast(memberID, wsPayloadBytes)
 		}
+	case "VOICE_START_RINGING":
+		data, ok := rawEvent["data"].(map[string]interface{})
+		if !ok {
+			log.Printf("Voice start ringing event has no data: %f", rawEvent)
+		}
+
+		log.Printf("Broadcasting Voice Ringing Event: Room=%s, caller=%s", data["room_id"], data["caller"])
+
+		// Get room ID from event data
+		roomID, ok := data["room_id"].(string)
+		if !ok {
+			log.Printf("Voice participant event has no room_id")
+			return
+		}
+
+		callerID, ok := data["caller"].(string)
+		if !ok {
+			log.Printf("Voice participant event has no room_id")
+			return
+		}
+
+		updateData := map[string]interface{}{ // TODO: add timestamp
+			"room_id":    roomID,
+			"caller":     callerID,
+			"event_type": rawEvent["type"],
+		}
+
+		voicePayload := struct {
+			Op string      `json:"op"`
+			D  interface{} `json:"d"`
+		}{
+			Op: EventDispatch,
+			D: map[string]interface{}{
+				"type": rawEvent["type"],
+				"data": updateData,
+			},
+		}
+
+		// Marshal the voice payload
+		wsPayloadBytes, err = json.Marshal(voicePayload)
+		if err != nil {
+			log.Printf("Error marshaling voice participant payload: %v", err)
+			return
+		}
+
+		// Get room members from repository
+		userRepo := repository.GetUserRepository(database.Session)
+		roomMembers, err := userRepo.GetRoomMembersWithPermissions(roomID, "VIEW_ROOMS")
+		if err != nil {
+			log.Printf("Error getting room members with permissions for voice event: %v", err)
+			return
+		}
+
+		// Broadcast to all room members
+		log.Printf("Broadcasting to %s", roomMembers)
+		for _, memberID := range roomMembers {
+			h.Broadcast(memberID, wsPayloadBytes)
+		}
+	case "VOICE_STOP_RINGING":
+		data, ok := rawEvent["data"].(map[string]interface{})
+		if !ok {
+			log.Printf("Voice stop ringing event has no data: %f", rawEvent)
+		}
+
+		log.Printf("Broadcasting Voice Ringing Event: Room=%s, caller=%s", data["room_id"], data["caller"])
+
+		// Get room ID from event data
+		roomID, ok := data["room_id"].(string)
+		if !ok {
+			log.Printf("Voice participant event has no room_id")
+			return
+		}
+
+		callerID, ok := data["caller"].(string)
+		if !ok {
+			log.Printf("Voice participant event has no room_id")
+			return
+		}
+
+		updateData := map[string]interface{}{ // TODO: add timestamp
+			"room_id":    roomID,
+			"caller":     callerID,
+			"event_type": rawEvent["type"],
+		}
+
+		voicePayload := struct {
+			Op string      `json:"op"`
+			D  interface{} `json:"d"`
+		}{
+			Op: EventDispatch,
+			D: map[string]interface{}{
+				"type": rawEvent["type"],
+				"data": updateData,
+			},
+		}
+
+		// Marshal the voice payload
+		wsPayloadBytes, err = json.Marshal(voicePayload)
+		if err != nil {
+			log.Printf("Error marshaling voice participant payload: %v", err)
+			return
+		}
+
+		// Get room members from repository
+		userRepo := repository.GetUserRepository(database.Session)
+		roomMembers, err := userRepo.GetRoomMembersWithPermissions(roomID, "VIEW_ROOMS")
+		if err != nil {
+			log.Printf("Error getting room members with permissions for voice event: %v", err)
+			return
+		}
+
+		// Broadcast to all room members
+		log.Printf("Broadcasting to %s", roomMembers)
+		for _, memberID := range roomMembers {
+			h.Broadcast(memberID, wsPayloadBytes)
+		}
 	case "VOICE_PARTICIPANT_JOIN", "VOICE_PARTICIPANT_LEAVE":
 		data, ok := rawEvent["data"].(map[string]interface{})
 		if !ok {
