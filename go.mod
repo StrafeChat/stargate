@@ -1,8 +1,6 @@
 module github.com/StrafeChat/stargate
 
-go 1.23
-
-toolchain go1.23.6
+go 1.24.0
 
 require (
 	github.com/SherClockHolmes/webpush-go v1.3.0
@@ -20,6 +18,6 @@ require (
 	github.com/onsi/ginkgo v1.16.5 // indirect
 	github.com/onsi/gomega v1.36.2 // indirect
 	github.com/vmihailenco/tagparser/v2 v2.0.0 // indirect
-	golang.org/x/crypto v0.9.0 // indirect
+	golang.org/x/crypto v0.45.0 // indirect
 	gopkg.in/inf.v0 v0.9.1 // indirect
 )
